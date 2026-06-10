@@ -366,6 +366,52 @@ Grid    (커널 전체 = 일감 전부)
 그런데 SM의 메모장은 65,536개뿐 → 절반인 1024명(=32 warp)만 올릴 수 있음
 → occupancy = 32 / 64 = <span class="tok-num">50%</span></code></pre>
     <p>메모장을 적게 쓰는 커널로 바꾸면 더 많은 일꾼이 올라가 occupancy가 올라갑니다.</p>
+
+    <div class="figure">
+      <svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg">
+        <style>
+          .frame{fill:#11161d;stroke:#2d333b;stroke-width:1.2}
+          .useg{fill:#16210f;stroke:#76b900;stroke-width:1.2}
+          .useo{fill:#2a1a12;stroke:#f0883e;stroke-width:1.4}
+          .t{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:12px sans-serif;font-weight:700}
+          .o{fill:#f0883e;font:12px sans-serif;font-weight:700}
+          .d{fill:#9da7b3;font:11px sans-serif}
+        </style>
+
+        <!-- 시나리오 A -->
+        <text class="t" x="20" y="24">커널 A — 스레드당 레지스터 32개 (검소)</text>
+        <text class="d" x="20" y="56">warp 슬롯 (최대 64)</text>
+        <rect class="frame" x="200" y="42" width="400" height="22" rx="4"/>
+        <rect class="useg"  x="200" y="42" width="400" height="22" rx="4"/>
+        <text class="g" x="616" y="58">64 / 64</text>
+        <text class="d" x="20" y="92">레지스터 (최대 65,536)</text>
+        <rect class="frame" x="200" y="78" width="400" height="22" rx="4"/>
+        <rect class="useg"  x="200" y="78" width="400" height="22" rx="4"/>
+        <text class="g" x="616" y="94">2048×32 = 65,536 (딱 맞음)</text>
+        <rect x="200" y="112" width="400" height="26" rx="4" fill="#16210f" stroke="#76b900"/>
+        <text class="g" x="400" y="130" text-anchor="middle">occupancy 100% — 두 예산이 같이 바닥남</text>
+
+        <line x1="20" y1="158" x2="840" y2="158" stroke="#2d333b" stroke-width="1"/>
+
+        <!-- 시나리오 B -->
+        <text class="t" x="20" y="184">커널 B — 스레드당 레지스터 64개 (헤픔)</text>
+        <text class="d" x="20" y="216">warp 슬롯 (최대 64)</text>
+        <rect class="frame" x="200" y="202" width="400" height="22" rx="4"/>
+        <rect class="useg"  x="200" y="202" width="200" height="22" rx="4"/>
+        <text class="d" x="616" y="218">32 / 64 — 절반이 빈 채로!</text>
+        <text class="d" x="20" y="252">레지스터 (최대 65,536)</text>
+        <rect class="frame" x="200" y="238" width="400" height="22" rx="4"/>
+        <rect class="useo"  x="200" y="238" width="400" height="22" rx="4"/>
+        <text class="o" x="616" y="254">1024×64 = 65,536 ← 먼저 바닥! (병목)</text>
+        <rect x="200" y="272" width="400" height="26" rx="4" fill="#2a1a12" stroke="#f0883e"/>
+        <text class="o" x="400" y="290" text-anchor="middle">occupancy 50% — 레지스터가 다 떨어져 warp를 더 못 올림</text>
+
+        <text class="d" x="20" y="328">규칙: 여러 예산(warp 슬롯·블록 수·레지스터·shared memory) 중 가장 먼저 바닥나는 것이 occupancy를 정한다</text>
+      </svg>
+      <div class="figcap">그림 — 같은 SM이라도 커널이 자원을 얼마나 쓰느냐에 따라 올라가는 warp 수가 달라진다. 가장 빡빡한 자원(여기선 레지스터)이 병목</div>
+    </div>
     <div class="callout tip">
       <div class="title">💡 그래서 occupancy가 왜 중요할까?</div>
       <p>아까 "느린 메모리를 <strong>많은 일꾼으로 가린다</strong>"고 했죠? 한 warp가 창고(global memory)에서 데이터를 기다리며 멈추면, 반장은 <strong>즉시 다른 대기 중인 warp에게 일을 시킵니다</strong>(0의 비용으로 전환!). 이렇게 하면 계산기가 놀지 않아요. 이 "메모리 기다림을 다른 일로 가리는" 기법을 <strong>latency hiding(지연 숨기기)</strong>이라고 합니다. 그러려면 SM에 대기 중인 warp가 충분히 많아야겠죠 → 그래서 occupancy가 중요합니다. (단, 무조건 100%가 최적은 아니에요 — <a href="scheduling.html#occupancy">④장</a>에서 자세히.)</p>
