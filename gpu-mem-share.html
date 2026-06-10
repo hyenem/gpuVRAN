@@ -44,6 +44,7 @@
       <a href="gpu-mem-share.html#hierarchy" class="sub">공유 계층</a>
       <a href="gpu-mem-share.html#vs-cpu" class="sub">CPU와의 차이</a>
       <a href="gpu-mem-share.html#handoff" class="sub">CP/UP 핸드오프</a>
+      <a href="gpu-mem-share.html#cp-late" class="sub">CP가 늦으면</a>
       <a href="gpu-mem-share.html#details" class="sub">챙길 디테일</a>
     </nav>
     <nav class="nav-group">
@@ -112,6 +113,39 @@
     <div class="callout tip">
       <div class="title">💡 핵심</div>
       <p>GPU에선 CP 설정→UP 처리가 <em>코어 간 전달</em>이 아니라 <em>공유 메모리 읽기</em>입니다. CP가 U보다 먼저 와서(T1a) 설정이 미리 준비되고, 커널 launch가 가시성을 보장하므로 — 제대로 설계하면 <strong>크리티컬 패스엔 추가 지연이 없습니다.</strong></p>
+    </div>
+
+    <h2 id="cp-late">3.5 CP가 제때 안 끝나면 — 크리티컬 패스 게이트</h2>
+    <p>
+      위 전제("CP가 먼저 와서 준비된다")가 깨지는 경우 — <strong>CP가 같은 블럭의 무거운 작업에 묶여 UP 시작 전에 안 끝나면?</strong> 이건 <strong>크리티컬 패스 의존성 위반</strong>입니다. CP가 UP를 게이트(gate)하니까요.
+    </p>
+    <div class="callout warn">
+      <div class="title">⚠️ CP는 원래 늦으면 안 되는 놈</div>
+      <p>CP는 작은 제어 메시지라 파싱이 빠릅니다. 그게 늦었다면 연산량이 아니라 <strong>스케줄링/자원 경합</strong> 문제 — "CP가 느린 작업 뒤에 줄 서 있다"는 <strong>설계 냄새(design smell)</strong>입니다. CP는 작지만 <strong>가장 급한 일</strong>이에요.</p>
+    </div>
+
+    <h3>예방 — CP를 느린 것과 떼고 우선순위를 준다</h3>
+    <ol>
+      <li><strong>CP를 무거운 UP 작업과 분리</strong> — CP 파싱을 무거운 GPU 커널/블럭에 끼워넣지 말 것. <a href="boundary.html#cu-plane">CP는 CPU(전용 경로), UP는 GPU</a>. "같은 블럭"이라는 것 자체가 고칠 지점.</li>
+      <li><strong>높은 우선순위·전용 자원</strong> — CP는 작으니 <a href="realtime.html#system">전용 코어</a>에서 도착 즉시 처리. 벌크 뒤에 큐잉 금지.</li>
+      <li><strong>CP 자체의 더 타이트한 데드라인</strong> — CP는 UP보다 먼저 끝나야 하니 사실상 <strong>더 이른 마감</strong>(DL이면 T1a_cp 윈도우). 이 안에 들도록 예산 잡고 <a href="realtime.html#why">최악 지연 측정</a>.</li>
+      <li><strong>파이프라인 깊이 늘리기</strong> — 슬롯 N의 CP를 더 앞당겨 처리해 리드타임 여유 확보.</li>
+    </ol>
+    <p><strong>원칙: CP의 worst-case 지연 &lt; T1a 리드타임</strong> 이 보장돼야 UP 시작 시점에 설정이 항상 준비됩니다.</p>
+
+    <h3>그래도 늦으면 (실패 처리)</h3>
+    <p><a href="ptp-timing.html#rx">늦은 UP 패킷</a>과 똑같이 — <strong>기다리면 죽습니다:</strong></p>
+    <table>
+      <thead><tr><th>선택</th><th>현실성</th></tr></thead>
+      <tbody>
+        <tr><td><strong>슬롯 드롭 (슬롯 단위 erasure)</strong></td><td>✅ 가장 현실적 — 슬롯 처리 포기, fault 로깅, HARQ 재전송에 맡김</td></tr>
+        <tr><td>기본/이전 슬롯 설정 재사용</td><td>⚠️ 보통 위험 — 설정은 슬롯마다 다름(빔·PRB 변경), 잘못된 처리 유발</td></tr>
+        <tr><td>무한정 대기</td><td>❌ HARQ 마감 깨짐 → 더 큰 실패</td></tr>
+      </tbody>
+    </table>
+    <div class="callout tip">
+      <div class="title">✅ 핵심</div>
+      <p>이건 정상 동작이 아니라 <strong>예외(fault)</strong>여야 합니다. 자주 일어나면 시스템이 <strong>under-provisioned</strong>(자원 부족)인 것이고, 해법은 "기다리기"가 아니라 <strong>CP 경로를 더 빠르게·분리·우선순위화</strong>하는 것입니다. CP의 worst-case 지연 &lt; 리드타임이 보장되도록 설계·측정하는 게 본질.</p>
     </div>
 
     <h2 id="details">4. 챙겨야 할 디테일</h2>
