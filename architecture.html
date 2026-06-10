@@ -262,6 +262,43 @@ Grid    (커널 전체 = 일감 전부)
         <tr><td><strong>Global Memory (VRAM)</strong></td><td>모든 스레드</td><td><strong>느림 (수백 사이클)</strong></td><td>건물 밖 대형 창고</td></tr>
       </tbody>
     </table>
+    <div class="figure">
+      <svg viewBox="0 0 860 380" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="am-up" markerWidth="10" markerHeight="10" refX="5" refY="2" orient="auto"><path d="M0,8 L5,0 L10,8 Z" fill="#76b900"/></marker>
+          <marker id="am-dn" markerWidth="10" markerHeight="10" refX="5" refY="8" orient="auto"><path d="M0,2 L5,10 L10,2 Z" fill="#9da7b3"/></marker>
+        </defs>
+        <style>
+          .t{fill:#e6edf3;font:14px sans-serif;font-weight:700}
+          .s{fill:#cdd6e0;font:11px sans-serif}
+          .ax{fill:#9da7b3;font:12px sans-serif}
+          .gr{fill:#76b900;font:12px sans-serif;font-weight:700}
+        </style>
+        <!-- 좌측 축 -->
+        <line x1="44" y1="120" x2="44" y2="60" stroke="#76b900" stroke-width="2" marker-end="url(#am-up)"/>
+        <text class="gr" x="56" y="74">빠름</text><text class="gr" x="56" y="90">작음</text>
+        <line x1="44" y1="290" x2="44" y2="350" stroke="#9da7b3" stroke-width="2" marker-end="url(#am-dn)"/>
+        <text class="ax" x="56" y="328">느림</text><text class="ax" x="56" y="344">큼</text>
+        <!-- 피라미드 4층 -->
+        <polygon points="370,50 490,50 555,125 305,125" fill="#243a12" stroke="#76b900" stroke-width="1.6"/>
+        <text class="t" x="430" y="86" text-anchor="middle">레지스터</text>
+        <text class="s" x="430" y="105" text-anchor="middle">스레드 전용 · ~1 사이클</text>
+
+        <polygon points="305,125 555,125 620,200 240,200" fill="#1b2b10" stroke="#5e9400" stroke-width="1.6"/>
+        <text class="t" x="430" y="160" text-anchor="middle">Shared Memory / L1</text>
+        <text class="s" x="430" y="180" text-anchor="middle">블록 · SM 내부 · 매우 빠름 (수동 관리)</text>
+
+        <polygon points="240,200 620,200 685,275 175,275" fill="#14233a" stroke="#58a6ff" stroke-width="1.6"/>
+        <text class="t" x="430" y="235" text-anchor="middle">L2 캐시</text>
+        <text class="s" x="430" y="255" text-anchor="middle">모든 SM 공유 · 빠름 (자동)</text>
+
+        <polygon points="175,275 685,275 750,350 110,350" fill="#1c2230" stroke="#6e7681" stroke-width="1.6"/>
+        <text class="t" x="430" y="312" text-anchor="middle">Global Memory (VRAM)</text>
+        <text class="s" x="430" y="332" text-anchor="middle">모든 스레드 공유 · 수백 사이클 (느림!) · 용량 큼</text>
+      </svg>
+      <div class="figcap">그림 2 — GPU 메모리 계층. 위로 갈수록 빠르고 작고 가깝고, 아래로 갈수록 느리고 크다. 최적화 = "느린 아래층 접근을 줄이고 빠른 위층에서 재사용"</div>
+    </div>
+
     <p>
       핵심은 <strong>"global memory(대형 창고)는 느리다"</strong>입니다. 그래서 고성능 커널의 두 가지 황금 기법이 나옵니다:
     </p>
