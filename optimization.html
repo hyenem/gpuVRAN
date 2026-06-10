@@ -186,6 +186,80 @@ C[i * stride] = A[i * stride];</code></pre>
     <pre><code><span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tile[<span class="tok-num">16</span>][<span class="tok-num">16</span>];      <span class="tok-com">// 👎 열 접근 시 bank conflict 가능</span>
 <span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tile[<span class="tok-num">16</span>][<span class="tok-num">16</span>+<span class="tok-num">1</span>];    <span class="tok-com">// 👍 +1 패딩으로 충돌 회피</span></code></pre>
 
+    <div class="figure">
+      <svg viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg">
+        <defs><marker id="ab" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker>
+        <marker id="abo" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#f0883e"/></marker></defs>
+        <style>
+          .th{fill:#1c2230;stroke:#2d333b;stroke-width:1}
+          .bank{fill:#161b22;stroke:#2d333b;stroke-width:1}
+          .bgood{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .bbad{fill:#2a1a12;stroke:#f0883e;stroke-width:1.6}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:12px sans-serif;font-weight:700}
+          .o{fill:#f0883e;font:12px sans-serif;font-weight:700}
+          .ln{stroke:#6e7681;stroke-width:1.2;fill:none}
+          .lno{stroke:#f0883e;stroke-width:1.4;fill:none}
+        </style>
+
+        <!-- 좌: 충돌 없음 -->
+        <text class="g" x="20" y="22">👍 충돌 없음 — 각자 다른 창구(뱅크)</text>
+        <text class="ts" x="20" y="46">스레드 (warp의 일부)</text>
+        <g>
+          <rect class="th" x="30"  y="52" width="56" height="24" rx="4"/><text class="ts" x="58"  y="68" text-anchor="middle">T0</text>
+          <rect class="th" x="118" y="52" width="56" height="24" rx="4"/><text class="ts" x="146" y="68" text-anchor="middle">T1</text>
+          <rect class="th" x="206" y="52" width="56" height="24" rx="4"/><text class="ts" x="234" y="68" text-anchor="middle">T2</text>
+          <rect class="th" x="294" y="52" width="56" height="24" rx="4"/><text class="ts" x="322" y="68" text-anchor="middle">T3</text>
+        </g>
+        <path class="ln" d="M58,76 L58,128"  marker-end="url(#ab)"/>
+        <path class="ln" d="M146,76 L146,128" marker-end="url(#ab)"/>
+        <path class="ln" d="M234,76 L234,128" marker-end="url(#ab)"/>
+        <path class="ln" d="M322,76 L322,128" marker-end="url(#ab)"/>
+        <text class="ts" x="20" y="122">shared memory 뱅크(창구)</text>
+        <g>
+          <rect class="bgood" x="30"  y="130" width="56" height="30" rx="4"/><text class="ts" x="58"  y="149" text-anchor="middle">뱅크0</text>
+          <rect class="bgood" x="118" y="130" width="56" height="30" rx="4"/><text class="ts" x="146" y="149" text-anchor="middle">뱅크1</text>
+          <rect class="bgood" x="206" y="130" width="56" height="30" rx="4"/><text class="ts" x="234" y="149" text-anchor="middle">뱅크2</text>
+          <rect class="bgood" x="294" y="130" width="56" height="30" rx="4"/><text class="ts" x="322" y="149" text-anchor="middle">뱅크3</text>
+        </g>
+        <rect x="30" y="180" width="320" height="26" rx="4" fill="#16210f" stroke="#76b900"/>
+        <text class="g" x="190" y="198" text-anchor="middle">4명 동시 처리 = 1 사이클</text>
+
+        <!-- 구분선 -->
+        <line x1="430" y1="10" x2="430" y2="290" stroke="#2d333b" stroke-width="1"/>
+
+        <!-- 우: 충돌 -->
+        <text class="o" x="450" y="22">👎 Bank Conflict — 모두 같은 창구로</text>
+        <text class="ts" x="450" y="46">스레드</text>
+        <g>
+          <rect class="th" x="460" y="52" width="56" height="24" rx="4"/><text class="ts" x="488" y="68" text-anchor="middle">T0</text>
+          <rect class="th" x="548" y="52" width="56" height="24" rx="4"/><text class="ts" x="576" y="68" text-anchor="middle">T1</text>
+          <rect class="th" x="636" y="52" width="56" height="24" rx="4"/><text class="ts" x="664" y="68" text-anchor="middle">T2</text>
+          <rect class="th" x="724" y="52" width="56" height="24" rx="4"/><text class="ts" x="752" y="68" text-anchor="middle">T3</text>
+        </g>
+        <path class="lno" d="M488,76 L545,128" marker-end="url(#abo)"/>
+        <path class="lno" d="M576,76 L558,128" marker-end="url(#abo)"/>
+        <path class="lno" d="M664,76 L572,128" marker-end="url(#abo)"/>
+        <path class="lno" d="M752,76 L586,128" marker-end="url(#abo)"/>
+        <text class="ts" x="450" y="122">뱅크</text>
+        <g>
+          <rect class="bbad" x="530" y="130" width="64" height="30" rx="4"/><text class="o" x="562" y="149" text-anchor="middle">뱅크0</text>
+          <rect class="bank" x="606" y="130" width="56" height="30" rx="4"/><text class="ts" x="634" y="149" text-anchor="middle">뱅크1</text>
+          <rect class="bank" x="674" y="130" width="56" height="30" rx="4"/><text class="ts" x="702" y="149" text-anchor="middle">뱅크2</text>
+          <rect class="bank" x="742" y="130" width="56" height="30" rx="4"/><text class="ts" x="770" y="149" text-anchor="middle">뱅크3</text>
+        </g>
+        <rect x="460" y="180" width="338" height="26" rx="4" fill="#2a1a12" stroke="#f0883e"/>
+        <text class="o" x="629" y="198" text-anchor="middle">한 명씩 줄서기 = 4 사이클 (4-way conflict)</text>
+
+        <!-- 하단 설명 -->
+        <text class="ts" x="20" y="246">· 뱅크는 실제로 32개이고, 주소를 4바이트 단위로 32개 창구에 번갈아 배정 (주소÷4 % 32 = 뱅크 번호)</text>
+        <text class="ts" x="20" y="266">· 예외: 모두가 "같은 주소"를 읽으면 방송(broadcast)으로 1번에 처리 — 충돌 아님</text>
+        <text class="ts" x="20" y="286">· tile[16][16+1] 패딩 = 열 방향 접근의 뱅크 번호를 어긋나게 해서 좌측 그림처럼 만드는 트릭</text>
+      </svg>
+      <div class="figcap">그림 — 스레드들이 서로 다른 뱅크에 가면 동시 처리(좌), 같은 뱅크의 다른 주소로 몰리면 한 명씩 줄서기(우). 패딩은 우측을 좌측으로 바꾸는 기법</div>
+    </div>
+
     <h2 id="occupancy">6.4 Occupancy & 분기 줄이기</h2>
     <ul>
       <li><strong>Occupancy 확보</strong> — <a href="scheduling.html#occupancy">④에서 본</a>대로, SM에 warp를 충분히 채워 <a href="scheduling.html#warp">메모리 지연을 가립니다</a>. 단 100%가 목표는 아니고 "지연을 가릴 만큼만".</li>
