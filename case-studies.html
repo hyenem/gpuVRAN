@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심화 · 실전 사례: inline vs lookaside 진영 — GPU vRAN 노트</title>
+<meta name="description" content="실제 상용 GPU vRAN 사례 정리 — NVIDIA Aerial 기반 inline(SoftBank, T-Mobile, Nokia, Mavenir)과 Intel ACC100/vRAN Boost 기반 lookaside 진영을 비교합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>심화 · 데이터 이동</h4>
+      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
+      <a href="interconnect.html#share" class="sub">메모리 공유 여부</a>
+      <a href="interconnect.html#pcie" class="sub">PCIe · NVLink</a>
+      <a href="interconnect.html#smi" class="sub">nvidia-smi · topo</a>
+      <a href="interconnect.html#nic" class="sub">NIC · GPUDirect</a>
+      <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
+      <a href="case-studies.html">실전 사례: 두 진영</a>
+      <a href="case-studies.html#inline-cases" class="sub">inline 사례 (GPU)</a>
+      <a href="case-studies.html#lookaside-cases" class="sub">lookaside 사례</a>
+      <a href="case-studies.html#summary" class="sub">한 장 요약</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / 심화 · 데이터 이동 / 실전 사례</div>
+    <h1>실전 사례: inline vs lookaside 두 진영</h1>
+    <p class="lead">이론을 넘어 실제 상용·트라이얼 사례를 봅니다. 핵심 반전부터 — <strong>"GPU vRAN"과 "lookaside"는 현실에서 거의 다른 진영입니다.</strong> GPU를 택하면 자연히 inline(NVIDIA Aerial)으로 가고, lookaside를 택하면 보통 GPU가 아닌 Intel/FPGA로 갑니다.</p>
+
+    <div class="callout">
+      <div class="title">🔑 한 줄 핵심</div>
+      <p>GPU를 <a href="vran-dilemma.html#inline">lookaside</a>로 쓰면 함수마다 PCIe 왕복이 생겨 GPU의 장점이 죽습니다. 그래서 NVIDIA는 아예 <strong>"vRAN엔 programmable inline 가속이 필수"</strong>라고 주장하며 inline으로 갔고, 상용 GPU vRAN은 사실상 모두 inline입니다.</p>
+    </div>
+
+    <h2 id="inline-cases">1. Inline — "GPU에서 다 하는 방식" 사례</h2>
+    <p>모두 <strong>NVIDIA Aerial(cuPHY)</strong> 기반입니다. NIC/DPU가 안테나 데이터를 <a href="interconnect.html#nic">GPUDirect</a>로 GPU에 직접 꽂고, GPU 안에서 FFT→채널추정→MIMO→LDPC를 전부 처리합니다.</p>
+
+    <h3>① SoftBank "AITRAS" — 가장 진전된 상용형</h3>
+    <ul>
+      <li><strong>구성</strong>: NVIDIA <strong>GH200(Grace Hopper)</strong> + <strong>BlueField-3 DPU</strong> + <strong>Spectrum-X</strong> 네트워킹으로 풀 5G vRAN 스택.</li>
+      <li><strong>성과</strong>: 실제 필드 트라이얼에서 <strong>16-layer massive MIMO</strong>를 완전 소프트웨어 정의로 구현 — 업계 최초 수준의 이정표.</li>
+      <li><strong>의미</strong>: 우리가 본 "NIC/DPU→GPUDirect→GPU 인라인 처리, CPU는 경로 밖" 구조의 실제 구현체.</li>
+    </ul>
+
+    <h3>② T-Mobile · Indosat Ooredoo Hutchison</h3>
+    <p>NVIDIA <strong>Aerial RAN Computer(ARC)</strong> 기반 AI-RAN 엔게이지먼트 진행. ARC는 Grace Hopper/GB200 기반 vRAN 서버이고, 셀 사이트(기지국 현장)용 소형 버전인 <strong>ARC-Compact</strong>도 있습니다.</p>
+
+    <h3>③ Nokia anyRAN on NVIDIA</h3>
+    <p>Nokia의 RAN 소프트웨어(anyRAN)를 NVIDIA AI Aerial 플랫폼에서 검증 → 랩 검증에서 <strong>상용 배포로 이동 중</strong>(MWC 2026 시연). 기존 RAN 벤더가 GPU 플랫폼을 채택하는 흐름의 신호.</p>
+
+    <h3>④ 솔루션 파트너 생태계</h3>
+    <p><strong>Mavenir, Capgemini, Fujitsu, Kyocera</strong> 등이 Aerial 위에 L1/스택을 통합. 즉 cuPHY를 직접 안 짜도 그 위에서 제품을 올리는 생태계가 형성돼 있습니다.</p>
+
+    <div class="callout tip">
+      <div class="title">🤖 왜 이렇게 활발한가 — AI-RAN</div>
+      <p>이 사례들이 공통적으로 "AI-RAN"으로 묶이는 이유: RAN 부하가 낮을 때 <strong>같은 GPU로 AI 추론을 돌려</strong> 장비를 양용하기 때문입니다. <a href="vran-dilemma.html#vendors">딜레마 페이지</a>에서 본 "종속의 대가로 얻는 것" — GPU 범용성의 실제 사업 논리입니다.</p>
+    </div>
+
+    <h2 id="lookaside-cases">2. Lookaside — 실제로는 대부분 비(非)-GPU</h2>
+    <p>상용 vRAN의 lookaside는 GPU가 아니라 이쪽입니다. L1은 CPU(Xeon)에서 돌고 <strong>LDPC 같은 무거운 함수만</strong> <a href="vran-dilemma.html#bbdev">DPDK bbdev</a> API로 가속 카드에 외주합니다.</p>
+
+    <table>
+      <thead><tr><th>사례</th><th>종류</th><th>내용</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Intel ACC100</strong></td><td>eASIC</td><td>FEC 전용 가속기. LDPC enc/dec를 bbdev로 PCIe 카드에 외주</td></tr>
+        <tr><td><strong>Intel vRAN Boost</strong></td><td>CPU 내장</td><td>Sapphire Rapids-EE에 FEC 가속을 SoC에 통합 → 별도 카드 제거</td></tr>
+        <tr><td><strong>AccelerComm</strong></td><td>FPGA IP</td><td>bbdev 호환 lookaside FEC 가속 IP</td></tr>
+        <tr><td><strong>Ericsson + Verizon</strong></td><td>진영</td><td>Cloud RAN에서 <strong>lookaside를 지지</strong> — NVIDIA의 inline 주장과 대립</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <div class="title">⚠️ GPU를 lookaside로 쓰는 경우는?</div>
+      <p>주로 <strong>학술 벤치마크</strong>입니다. 최근 <em>DecodeX</em>(arXiv, 2025) 논문처럼 LDPC 디코딩을 <strong>CPU vs GPU vs ASIC</strong>로 비교하는 연구가 그 예고, <strong>상용 제품으로 GPU 전용 lookaside FEC 카드는 사실상 없습니다.</strong> GPU lookaside는 PCIe 왕복 오버헤드 때문에 상용성이 떨어지기 때문입니다.</p>
+    </div>
+
+    <h2 id="summary">3. 한 장 요약</h2>
+    <pre><code>                  상용 GPU vRAN          상용 lookaside vRAN
+─────────────────────────────────────────────────────────────
+방식              inline                 lookaside
+가속기            GPU (NVIDIA Aerial)    Intel ACC100 / vRAN Boost / FPGA
+대표 사례         SoftBank, T-Mobile,    Ericsson+Verizon,
+                  Nokia, Mavenir         Intel FlexRAN 생태계
+데이터 경로       NIC→GPU 직접 (복사 X)   CPU↔가속기 왕복 (복사 O)
+GPU lookaside?    —                      연구·벤치마크 단계 (DecodeX 등)</code></pre>
+
+    <div class="callout tip">
+      <div class="title">✅ 결론</div>
+      <p>
+        "GPU vRAN"과 "lookaside"는 현실에선 거의 <strong>다른 진영</strong>입니다. GPU를 택하면 자연스럽게 inline(NVIDIA Aerial)으로, lookaside를 택하면 보통 GPU가 아닌 Intel/FPGA로 갑니다. 이것이 <a href="vran-dilemma.html">"성능 vs 개방성" 딜레마</a>가 시장에서 실제로 갈라지는 모습입니다. 개발 방향을 정할 때 — "GPU로 간다 = inline으로 간다"를 사실상 기본 전제로 깔고 시작하면 됩니다.
+      </p>
+    </div>
+
+    <h2 id="sources">참고 자료</h2>
+    <ul>
+      <li><a href="https://developer.nvidia.com/blog/performing-the-vran-benchmark-with-gpus-using-the-nvidia-aerial-sdk/" target="_blank" rel="noopener">SoftBank Benchmarks vRAN with GPUs and the NVIDIA Aerial SDK</a></li>
+      <li><a href="https://developer.nvidia.com/blog/ai-ran-goes-live-and-unlocks-a-new-ai-opportunity-for-telcos/" target="_blank" rel="noopener">AI-RAN Goes Live (NVIDIA)</a></li>
+      <li><a href="https://convergedigest.com/nokia-nvidia-advance-ai-ran-with-t-mobile-indosat-and-softbank-trials/" target="_blank" rel="noopener">Nokia, NVIDIA Advance AI-RAN with T-Mobile, Indosat and SoftBank Trials</a></li>
+      <li><a href="https://developer.nvidia.com/blog/deploy-ai-ran-at-cell-sites-with-nvidia-arc-compact/" target="_blank" rel="noopener">Deploy AI-RAN at Cell Sites with NVIDIA ARC-Compact</a></li>
+      <li><a href="https://developer.nvidia.com/blog/building-software-defined-high-performance-and-efficient-vran-requires-programmable-inline-acceleration/" target="_blank" rel="noopener">Building vRAN Requires Programmable Inline Acceleration (NVIDIA)</a></li>
+      <li><a href="https://the-mobile-network.com/2022/12/ericsson-and-verizon-back-look-aside-for-cloud-ran/" target="_blank" rel="noopener">Ericsson and Verizon back look-aside for Cloud RAN</a></li>
+      <li><a href="https://doc.dpdk.org/guides/bbdevs/vrb1.html" target="_blank" rel="noopener">Intel vRAN Boost PMD — DPDK bbdev</a></li>
+      <li><a href="https://arxiv.org/html/2511.02952v1" target="_blank" rel="noopener">DecodeX: Benchmarking LDPC Decoding across CPU, GPU, and ASIC (arXiv)</a></li>
+    </ul>
+
+    <div class="pager">
+      <a href="vran-dilemma.html"><div class="dir">← 이전</div><div class="ttl">성능 vs 개방성 딜레마</div></a>
+      <a class="next" href="vran.html"><div class="dir">관련 →</div><div class="ttl">Part 3 · GPU vRAN 가속</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
