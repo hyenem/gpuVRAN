@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>⑤ CUDA Graphs — GPU·CUDA 노트</title>
-<meta name="description" content="CUDA Graphs 동작 원리 — 3단계, stream capture, 그래프 업데이트, conditional node, device graph launch.">
+<meta name="description" content="CUDA Graphs 동작 원리 — 3단계, stream capture, 그래프 업데이트, conditional node, device graph launch를 친절하게 설명합니다.">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -79,91 +79,107 @@
   <div class="content-inner">
     <div class="breadcrumb"><a href="index.html">홈</a> / ⑤ CUDA Graphs</div>
     <h1>⑤ CUDA Graphs</h1>
-    <p class="lead">한 줄 요약 — <strong>반복되는 GPU 작업 시퀀스를 "그래프"로 한 번 캡처해, 매번 통째로 launch</strong>해서 <a href="execution.html#launch">launch 오버헤드</a>와 지터를 없애는 기술입니다.</p>
+    <p class="lead">한 줄로 — <strong>매번 똑같이 반복되는 GPU 작업 묶음을 "그래프"로 한 번 찍어두고, 그다음부터는 통째로 한 방에 실행</strong>하는 기술입니다. <a href="execution.html#launch">③에서 본 launch 비용</a>과 지터(들쭉날쭉함)를 없애줘요. 조금 고급 주제지만, 비유로 차근차근 가봅시다.</p>
 
-    <h2 id="why">5.1 왜 그래프인가 — launch 오버헤드</h2>
+    <h2 id="why">5.1 왜 그래프인가 — "주문서를 매번 새로 쓰는 낭비"</h2>
     <p>
-      커널을 하나 launch할 때마다 <strong>CPU 쪽 오버헤드(드라이버 처리, ~µs)</strong>가 듭니다. <strong>작은 커널 수십 개를 반복</strong>하면 이 비용이 쌓여 — 연산보다 launch가 병목이 되고, 커널 사이 간격과 <strong>지터</strong>가 생깁니다.
+      <a href="execution.html#launch">③에서</a> 커널 호출은 "주방에 주문서를 넣는 것"이라고 했죠. 그 <strong>주문서를 넣는 행위 자체가 ~µs(마이크로초)의 비용</strong>이었습니다. 큰 커널 하나면 무시할 만한데, <strong>작은 커널을 수십 개씩 매번 반복</strong>하면 어떻게 될까요?
     </p>
-    <pre><code><span class="tok-com">// 매번 N번 launch → N번의 CPU 오버헤드 + 지터</span>
-a&lt;&lt;&lt;...&gt;&gt;&gt;(); b&lt;&lt;&lt;...&gt;&gt;&gt;(); c&lt;&lt;&lt;...&gt;&gt;&gt;(); d&lt;&lt;&lt;...&gt;&gt;&gt;();
-
-<span class="tok-com">// 그래프: 한 번 캡처, 매번 한 방에</span>
-<span class="tok-fn">cudaGraphLaunch</span>(graphExec, stream);   <span class="tok-com">// 1번 launch로 전체 시퀀스</span></code></pre>
+    <pre><code><span class="tok-com">// 매 반복마다 주문서를 N장 새로 쓰는 셈 → N번의 비용 + 들쭉날쭉(지터)</span>
+a&lt;&lt;&lt;...&gt;&gt;&gt;();  b&lt;&lt;&lt;...&gt;&gt;&gt;();  c&lt;&lt;&lt;...&gt;&gt;&gt;();  d&lt;&lt;&lt;...&gt;&gt;&gt;();   <span class="tok-com">// 반복...</span></code></pre>
+    <p>
+      매번 똑같은 순서로 a→b→c→d를 돌린다면, "이 순서를 한 번만 적어두고 다음부턴 그걸 통째로 실행"하면 낭비가 사라지겠죠. 그게 CUDA Graphs입니다:
+    </p>
+    <pre><code><span class="tok-com">// 한 번 그래프로 찍어두면, 그다음부턴:</span>
+<span class="tok-fn">cudaGraphLaunch</span>(graphExec, stream);   <span class="tok-com">// 단 1번의 호출로 a→b→c→d 전부 실행</span></code></pre>
     <div class="callout tip">
       <div class="title">💡 얻는 것 3가지</div>
       <ul>
-        <li><strong>launch 비용 분할상환</strong> — N번 → 1번</li>
-        <li><strong>CPU 해방·지터↓</strong> — CPU는 한 번 던지고, GPU가 자율 실행</li>
-        <li><strong>드라이버 최적화</strong> — 전체 워크플로를 미리 알기에 커널 간 간격을 더 잘 짬</li>
+        <li><strong>비용 분할상환</strong> — 주문서 N장 쓰던 걸 1번으로.</li>
+        <li><strong>CPU 해방 + 지터↓</strong> — CPU는 한 번만 던지고 빠짐, GPU가 알아서 쭉 실행 → 타이밍이 일정해짐.</li>
+        <li><strong>드라이버가 미리 최적화</strong> — 전체 순서를 미리 아니까, 커널 사이 빈틈을 더 잘 메웁니다.</li>
       </ul>
     </div>
 
     <h2 id="stages">5.2 3단계 동작 — 정의 → 인스턴스화 → 실행</h2>
-    <p>비싼 셋업은 <em>한 번만</em>, 실행은 <em>싸게 반복</em>이 핵심입니다.</p>
+    <p>그래프는 <strong>세 단계</strong>로 씁니다. 핵심 아이디어는 <strong>"비싼 준비는 딱 한 번, 실행은 싸게 무한 반복"</strong>이에요.</p>
     <table>
-      <thead><tr><th>단계</th><th>무엇</th><th>비용</th></tr></thead>
+      <thead><tr><th>단계</th><th>무엇을 하나</th><th>비유</th><th>비용</th></tr></thead>
       <tbody>
-        <tr><td><strong>① 정의</strong></td><td>노드(작업)+의존성(DAG) 구성 → <code>cudaGraph_t</code></td><td>1회</td></tr>
-        <tr><td><strong>② 인스턴스화</strong></td><td>실행 객체로 컴파일(검증·최적화) → <code>cudaGraphExec_t</code></td><td>1회 (비쌈)</td></tr>
-        <tr><td><strong>③ 실행</strong></td><td><code>cudaGraphLaunch</code>로 반복 재생</td><td><strong>매번 (쌈)</strong></td></tr>
+        <tr><td><strong>① 정의 (definition)</strong></td><td>작업(노드)과 순서(의존성)를 적어 <code>cudaGraph_t</code> 만들기</td><td>레시피 적기</td><td>1회</td></tr>
+        <tr><td><strong>② 인스턴스화 (instantiation)</strong></td><td>실행 가능한 형태로 컴파일(검증·최적화) → <code>cudaGraphExec_t</code></td><td>주방에 레시피 세팅</td><td>1회 (비쌈)</td></tr>
+        <tr><td><strong>③ 실행 (execution)</strong></td><td><code>cudaGraphLaunch</code>로 반복 재생</td><td>"그거 한 번 더!"</td><td><strong>매번 (쌈)</strong></td></tr>
       </tbody>
     </table>
-    <p>그래프 = <strong>노드 + 엣지의 DAG</strong>. 노드 종류: 커널, memcpy, memset, host 함수, child graph, event, conditional 등.</p>
+    <p>여기서 <strong>그래프(graph)</strong>는 수학의 그래프 — <strong>작업(노드) + 화살표(의존성)로 이루어진 흐름도(DAG)</strong>입니다. 노드 종류엔 커널뿐 아니라 memcpy(복사), memset, host 함수, 다른 그래프, 이벤트 등이 들어갈 수 있어요.</p>
+    <pre><code>그래프 예 (화살표 = "먼저 끝나야 함"):
+   [복사] → [커널 a] → [커널 b] → [복사 결과]
+                    ↘ [커널 c] ↗      (a 다음 b·c 병렬 가능)</code></pre>
 
-    <h2 id="build">5.3 만드는 법 — Stream Capture vs Explicit API</h2>
-    <h3>① Stream Capture (가장 쉬움)</h3>
-    <pre><code><span class="tok-fn">cudaStreamBeginCapture</span>(stream, cudaStreamCaptureModeGlobal);
-a&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 이 블록의 작업들이 실행되지 않고</span>
-b&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 그래프에 "기록"됨 (의존성은 스트림에서 추론)</span>
-<span class="tok-fn">cudaStreamEndCapture</span>(stream, &graph);</code></pre>
-    <h3>② Explicit API (정밀 제어)</h3>
+    <h2 id="build">5.3 만드는 법 — 두 가지 방식</h2>
+    <h3>① Stream Capture — 가장 쉬움 (기존 코드 재활용)</h3>
+    <p>이미 짜둔 <a href="execution.html#async">스트림 코드</a>를 <code>Begin/EndCapture</code>로 감싸기만 하면, 그 안의 작업들이 <strong>실행되는 대신 "녹화"</strong>되어 그래프가 됩니다. 순서(의존성)는 스트림 사용에서 자동으로 알아냅니다.</p>
+    <pre><code><span class="tok-fn">cudaStreamBeginCapture</span>(stream, cudaStreamCaptureModeGlobal);  <span class="tok-com">// 녹화 시작</span>
+a&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 이 줄들은 지금 실행되는 게 아니라</span>
+b&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 그래프에 '기록'됨</span>
+<span class="tok-fn">cudaStreamEndCapture</span>(stream, &graph);   <span class="tok-com">// 녹화 끝 → graph 완성</span></code></pre>
+    <h3>② Explicit API — 정밀 제어</h3>
+    <p>노드를 손으로 하나씩 추가하고 화살표(의존성)를 직접 지정합니다. 그래프 구조를 세밀하게 다룰 때 써요.</p>
     <pre><code><span class="tok-fn">cudaGraphCreate</span>(&graph, 0);
-<span class="tok-fn">cudaGraphAddKernelNode</span>(&nA, graph, NULL, 0, &pA);
-<span class="tok-fn">cudaGraphAddKernelNode</span>(&nB, graph, &nA, 1, &pB);  <span class="tok-com">// nA에 의존</span></code></pre>
+<span class="tok-fn">cudaGraphAddKernelNode</span>(&nA, graph, NULL, 0, &pA);     <span class="tok-com">// 노드 a (의존 없음)</span>
+<span class="tok-fn">cudaGraphAddKernelNode</span>(&nB, graph, &nA, 1, &pB);     <span class="tok-com">// 노드 b (a에 의존)</span></code></pre>
 
-    <h2 id="update">5.4 업데이트 — 구조는 그대로, 파라미터만</h2>
-    <p>데이터 포인터·크기만 바뀌고 <strong>구조(위상)는 같다</strong>면, 재빌드 없이 파라미터만 갱신합니다.</p>
-    <pre><code>빌드 + 인스턴스화 (1회)
- └─ 반복: cudaGraphExecKernelNodeSetParams(...) → cudaGraphLaunch(...)</code></pre>
+    <h2 id="update">5.4 업데이트 — 구조는 그대로, 데이터만 바꾸기</h2>
+    <p>
+      여기가 실전에서 가장 유용합니다. 보통 반복할 때 <strong>처리할 데이터(포인터)만 바뀌고 작업 순서는 똑같죠.</strong> 그럼 그래프를 매번 새로 만들 필요 없이, <strong>파라미터만 갈아끼우면</strong> 됩니다.
+    </p>
+    <pre><code>준비: 빌드 + 인스턴스화 (딱 1번)
+반복: 데이터 포인터만 갱신 → 실행
+      └─ cudaGraphExecKernelNodeSetParams(...)  → cudaGraphLaunch(...)</code></pre>
     <ul>
-      <li><strong>노드 단위</strong> — <code>cudaGraphExecKernelNodeSetParams</code> 등으로 특정 노드만</li>
-      <li><strong>전체 그래프</strong> — <code>cudaGraphExecUpdate</code> (위상 동일한 새 그래프로 일괄)</li>
+      <li><strong>노드 하나만</strong> 바꾸기 — <code>cudaGraphExecKernelNodeSetParams</code> 등으로 특정 노드 파라미터 교체</li>
+      <li><strong>전체를 한꺼번에</strong> — <code>cudaGraphExecUpdate</code>로 (구조가 같은) 새 그래프의 파라미터를 일괄 적용</li>
     </ul>
     <div class="callout">
-      <div class="title">📌 성질</div>
-      <p>업데이트는 <strong>다음 launch부터 적용</strong>되고 진행 중 launch엔 영향 없음. 단 <strong>위상은 동일</strong>해야 함 — 노드 추가/삭제는 재빌드 필요.</p>
+      <div class="title">📌 알아둘 성질</div>
+      <p>업데이트는 <strong>다음 실행(launch)부터 적용</strong>되고, 이미 돌고 있는 실행엔 영향을 주지 않습니다. 단 <strong>구조(노드·화살표 모양)는 똑같아야</strong> 해요 — 노드를 새로 추가하거나 빼려면 그래프를 다시 만들어야 합니다.</p>
     </div>
 
-    <h2 id="advanced">5.5 고급 — Conditional Node & Device Graph Launch</h2>
-    <h3>Conditional Nodes (CUDA 12.3+)</h3>
-    <p>그래프 구조 고정이라 <strong>동적 제어 흐름</strong>이 약점이었는데, <strong>conditional node</strong>(IF/WHILE 컨테이너)가 풉니다. body graph가 <strong>조건 변수</strong>에 따라 실행됩니다.</p>
+    <h2 id="advanced">5.5 고급 — 동적 흐름과 GPU 자율 실행</h2>
+    <h3>Conditional Node (CUDA 12.3+) — 그래프 안의 if / while</h3>
+    <p>
+      그래프는 구조가 고정이라 <strong>"조건에 따라 다르게 실행"</strong>이 약점이었습니다. 이걸 푸는 게 <strong>conditional node</strong> — 그래프 안에 <strong>IF나 WHILE 상자</strong>를 두고, 그 안의 작업을 <strong>조건 값</strong>에 따라 실행하거나 반복하는 거예요.
+    </p>
     <ul>
-      <li>커널에서 <code>cudaGraphSetConditional</code>로 조건 값 설정</li>
-      <li><strong>IF</strong>: 조건≠0이면 body 1회 / <strong>WHILE</strong>: 참인 동안 반복 (가변 반복 알고리즘에 유용)</li>
+      <li>커널 안에서 <code>cudaGraphSetConditional</code>로 조건 값을 정함</li>
+      <li><strong>IF</strong>: 조건이 참이면 안의 작업을 1번 / <strong>WHILE</strong>: 참인 동안 반복 (예: "수렴할 때까지 반복하는 계산"에 딱)</li>
     </ul>
-    <h3>Device Graph Launch (CUDA 12+)</h3>
-    <p><strong>GPU 커널이 직접 다른 그래프를 launch</strong> — CPU를 안 거치고요. GPU 코드가 다음에 어떤 그래프를 돌릴지 동적으로 정해, CPU↔GPU 왕복을 없애는 계층적 실행이 가능합니다.</p>
+    <h3>Device Graph Launch (CUDA 12+) — GPU가 직접 그래프 실행</h3>
+    <p>
+      원래 그래프 실행은 CPU가 시켰는데, 이제 <strong>GPU 커널이 직접 다른 그래프를 실행</strong>할 수 있습니다. GPU가 "다음엔 어떤 그래프를 돌릴지" 스스로 정해서, <strong>CPU에 묻는 왕복을 없애</strong>는 거죠. 복잡한 단계적 처리를 GPU 안에서 끝낼 수 있습니다.
+    </p>
 
     <div class="callout warn">
-      <div class="title">⚠️ 함정</div>
+      <div class="title">⚠️ 흔한 함정</div>
       <ul>
-        <li><strong>빌드·인스턴스화 비용</strong> — <em>한 번만</em> 하라. 매 반복 재빌드하면 손해.</li>
-        <li><strong>구조 고정</strong> — 위상 변경은 재빌드. 동적 분기는 conditional node로 일부만.</li>
-        <li><strong>캡처 중 일부 동기 API 금지</strong> — capture 모드 제약 주의.</li>
+        <li><strong>준비(빌드·인스턴스화)는 딱 한 번만</strong> — 매 반복마다 새로 만들면 오히려 더 느려집니다(가장 흔한 실수).</li>
+        <li><strong>구조 고정</strong> — 작업 순서를 바꾸려면 재빌드. 동적 분기는 conditional node로 일부만 해결.</li>
+        <li><strong>녹화(capture) 중엔 일부 동기 호출 금지</strong> — capture 모드 제약을 확인하세요.</li>
       </ul>
     </div>
 
     <div class="callout tip">
-      <div class="title">✅ ⑤ 정리</div>
-      <p>CUDA Graphs = <strong>정의→인스턴스화(1회)→실행(반복)</strong>. 반복 커널 시퀀스를 한 번 캡처해 <strong>파라미터만 갱신하며 통째로 launch</strong> → launch 오버헤드·지터 제거. conditional node(동적 흐름)·device launch(CPU 우회)로 확장.</p>
+      <div class="title">✅ ⑤ 장 정리</div>
+      <p>
+        CUDA Graphs = <strong>정의 → 인스턴스화(딱 1번) → 실행(반복)</strong>. 매번 반복되는 커널 묶음을 한 번 찍어두고 <strong>데이터만 갈아끼우며 통째로 실행</strong> → launch 비용과 지터를 없앱니다. 동적 흐름은 conditional node, CPU 우회는 device launch로 확장돼요. 반복 워크로드가 있다면 꼭 고려할 기법입니다.
+      </p>
     </div>
 
     <h2 id="sources">참고 자료</h2>
     <ul>
       <li><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html" target="_blank" rel="noopener">CUDA Programming Guide — CUDA Graphs</a></li>
-      <li><a href="https://developer.nvidia.com/blog/dynamic-control-flow-in-cuda-graphs-with-conditional-nodes/" target="_blank" rel="noopener">NVIDIA — Conditional Nodes</a></li>
-      <li><a href="https://developer.nvidia.com/blog/constructing-cuda-graphs-with-dynamic-parameters/" target="_blank" rel="noopener">NVIDIA — Dynamic Parameters</a></li>
+      <li><a href="https://developer.nvidia.com/blog/dynamic-control-flow-in-cuda-graphs-with-conditional-nodes/" target="_blank" rel="noopener">NVIDIA Blog — Conditional Nodes</a></li>
+      <li><a href="https://developer.nvidia.com/blog/constructing-cuda-graphs-with-dynamic-parameters/" target="_blank" rel="noopener">NVIDIA Blog — Dynamic Parameters</a></li>
     </ul>
 
     <div class="pager">

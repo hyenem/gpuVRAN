@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>② CUDA 프로그래밍 — GPU·CUDA 노트</title>
-<meta name="description" content="CUDA 프로그래밍 모델, 첫 커널, 메모리 관리, 스레드 동기화를 예제와 함께 정리합니다.">
+<meta name="description" content="CUDA 프로그래밍 모델, 첫 커널, 메모리 관리, 스레드 동기화를 비유와 예제로 친절하게 설명합니다.">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -79,84 +79,145 @@
   <div class="content-inner">
     <div class="breadcrumb"><a href="index.html">홈</a> / ② CUDA 프로그래밍</div>
     <h1>② CUDA 프로그래밍</h1>
-    <p class="lead"><a href="architecture.html">①의 하드웨어 개념</a>을 실제 코드로 다룹니다. CUDA는 C++ 확장이며, 핵심은 "어떤 데이터를 어떤 스레드가 처리할지" 매핑하는 일입니다.</p>
+    <p class="lead"><a href="architecture.html">①장의 하드웨어 그림</a>을 이제 실제 코드로 옮깁니다. 겁먹지 마세요 — <strong>CUDA는 C/C++에 몇 가지 문법만 더한 것</strong>이고, 핵심은 딱 하나, "어떤 데이터를 어떤 일꾼(스레드)이 처리할지 정하는 일"입니다.</p>
+
+    <div class="callout">
+      <div class="title">📖 용어 먼저</div>
+      <p><strong>CUDA</strong> = NVIDIA GPU에 일을 시키는 프로그래밍 플랫폼/언어 확장. <strong>커널(kernel)</strong> = GPU에서 돌릴 함수. <strong>호스트(host)</strong> = CPU 쪽, <strong>디바이스(device)</strong> = GPU 쪽. 이 네 단어만 알면 시작할 수 있어요.</p>
+    </div>
 
     <h2 id="model">2.1 프로그래밍 모델 — Grid / Block / Thread</h2>
-    <p>병렬 작업은 3단 계층으로 조직됩니다. 이 구조가 <a href="architecture.html#sm">①의 하드웨어(SM, warp)</a>에 그대로 매핑됩니다.</p>
+    <p>
+      CUDA에서 병렬 작업은 <strong>3단 계층</strong>으로 조직됩니다. <a href="architecture.html#simt">①에서 본 계층</a>과 똑같아요 — 그게 그대로 하드웨어(SM, warp)에 매핑되거든요.
+    </p>
     <ul>
-      <li><strong>Thread</strong> — 가장 작은 실행 단위. 보통 데이터 원소 하나 처리.</li>
-      <li><strong>Block</strong> — 스레드 묶음. 같은 블록끼리 <strong>shared memory 공유 + 동기화</strong> 가능. 한 SM에서 실행.</li>
-      <li><strong>Grid</strong> — 블록의 묶음. 커널 하나 = grid 전체.</li>
+      <li><strong>Thread(스레드)</strong> — 일꾼 한 명. 보통 데이터 원소 하나를 처리합니다.</li>
+      <li><strong>Block(블록)</strong> — 스레드 묶음(한 조보다 큰 단위). 같은 블록끼리는 <strong>공용 작업대(shared memory)를 함께 쓰고 서로 기다려줄(동기화) 수</strong> 있어요. 한 블록은 통째로 한 SM에서 돌아갑니다.</li>
+      <li><strong>Grid(그리드)</strong> — 블록 전부의 묶음. 커널 하나를 실행하면 grid 전체가 GPU에 펼쳐집니다.</li>
     </ul>
-    <pre><code><span class="tok-com">// 각 스레드가 자신의 전역 인덱스를 계산하는 공식</span>
+    <p>
+      그럼 "수천 명의 일꾼 중에 나는 몇 번 일꾼이지?"를 어떻게 알까요? CUDA가 각 스레드에게 좌표를 알려줍니다 — <code>blockIdx</code>(내가 몇 번째 블록), <code>threadIdx</code>(블록 안에서 내 위치), <code>blockDim</code>(블록 크기). 이걸 조합해 <strong>전역 번호</strong>를 계산합니다:
+    </p>
+    <pre><code><span class="tok-com">// "나는 전체에서 몇 번 일꾼인가"를 계산하는 마법의 공식</span>
 <span class="tok-type">int</span> idx = blockIdx.x * blockDim.x + threadIdx.x;
-<span class="tok-com">//        ↑ 몇 번째 블록   ↑ 블록 크기   ↑ 블록 내 위치</span></code></pre>
-    <div class="callout">
-      <div class="title">🧩 핵심 사고법</div>
-      <p>CUDA 프로그래밍 = "내가 처리할 배열 인덱스를, 내 스레드 좌표(blockIdx, threadIdx)로부터 어떻게 계산할까?"를 정하는 일. 나머지는 평범한 C++입니다.</p>
+<span class="tok-com">//        ↑ 몇 번째 블록    × 블록 크기  + 블록 안 내 자리</span>
+
+<span class="tok-com">// 예) 블록 크기 256일 때, 3번 블록의 5번 스레드라면:</span>
+<span class="tok-com">//     idx = 3 * 256 + 5 = 773  → "나는 773번 일꾼, 773번 데이터를 처리"</span></code></pre>
+    <div class="callout tip">
+      <div class="title">🧩 CUDA의 핵심 사고법 (이거 하나면 됨)</div>
+      <p>CUDA 프로그래밍이란 결국 — <strong>"내가 처리할 배열의 칸 번호를, 내 좌표(blockIdx, threadIdx)로부터 어떻게 계산하지?"</strong>를 정하는 일입니다. 그 번호만 정하면, 나머지는 평범한 C++ 코드예요. CPU 코드의 <code>for (i=0; i&lt;n; i++)</code> 루프가, GPU에선 "수천 명이 각자 자기 <code>idx</code> 하나씩 맡는" 것으로 바뀌는 거죠.</p>
     </div>
 
-    <h2 id="kernel">2.2 첫 커널 — 벡터 덧셈</h2>
-    <pre><code><span class="tok-com">// CPU: 루프로 하나씩</span>
+    <h2 id="kernel">2.2 첫 커널 — 벡터 덧셈으로 감 잡기</h2>
+    <p>가장 기본 예제, 두 배열을 더하는 <code>C = A + B</code>를 CPU와 GPU로 비교해볼게요. 차이를 보면 "아하" 하실 거예요.</p>
+    <pre><code><span class="tok-com">// ===== CPU 버전: 루프로 하나씩 순서대로 =====</span>
 <span class="tok-key">void</span> <span class="tok-fn">vecAdd_cpu</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
-    <span class="tok-key">for</span> (<span class="tok-key">int</span> i = <span class="tok-num">0</span>; i &lt; n; i++) C[i] = A[i] + B[i];
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> i = <span class="tok-num">0</span>; i &lt; n; i++)   <span class="tok-com">// i를 0,1,2,... 차례로</span>
+        C[i] = A[i] + B[i];
 }
 
-<span class="tok-com">// GPU: 각 스레드가 원소 하나 담당 (루프가 사라짐)</span>
+<span class="tok-com">// ===== GPU 버전: 일꾼 한 명이 원소 하나 담당 (루프가 사라짐!) =====</span>
 <span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">vecAdd</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
-    <span class="tok-key">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
-    <span class="tok-key">if</span> (i &lt; n) C[i] = A[i] + B[i];   <span class="tok-com">// 범위 보호</span>
+    <span class="tok-key">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;  <span class="tok-com">// 내 번호 = 내 데이터 칸</span>
+    <span class="tok-key">if</span> (i &lt; n)                  <span class="tok-com">// 일꾼이 데이터보다 많을 수 있으니 범위 체크</span>
+        C[i] = A[i] + B[i];
 }</code></pre>
-    <p><code>__global__</code>은 "GPU에서 실행, CPU에서 호출되는 함수(=커널)" 표시입니다. 루프 대신 <strong>수천 스레드가 각자 한 원소씩</strong> 동시에 처리합니다.</p>
-    <h3>호스트(CPU) 쪽 실행</h3>
-    <pre><code><span class="tok-key">int</span> n = <span class="tok-num">1</span>&lt;&lt;<span class="tok-num">20</span>;  size_t bytes = n*<span class="tok-key">sizeof</span>(<span class="tok-key">float</span>);
-<span class="tok-key">float</span> *dA,*dB,*dC;
-<span class="tok-fn">cudaMalloc</span>(&dA, bytes); <span class="tok-fn">cudaMalloc</span>(&dB, bytes); <span class="tok-fn">cudaMalloc</span>(&dC, bytes);
-<span class="tok-fn">cudaMemcpy</span>(dA, hA, bytes, cudaMemcpyHostToDevice);   <span class="tok-com">// CPU→GPU 복사</span>
+    <p>
+      두 가지만 보세요. ① <code>__global__</code> — 이 표시가 "이 함수는 GPU에서 돌고, CPU가 불러낸다"는 뜻입니다(=커널). ② <strong>루프가 사라졌어요.</strong> CPU는 <code>i</code>를 0부터 n까지 돌리지만, GPU는 <strong>n개의 일꾼이 각자 자기 <code>i</code> 하나씩</strong> 동시에 처리하니 루프가 필요 없죠.
+    </p>
+    <div class="callout warn">
+      <div class="title">⚠️ <code>if (i &lt; n)</code>는 왜 있나요?</div>
+      <p>일꾼은 보통 256명 단위(블록)로 만들어지는데, 데이터 개수 n이 256의 배수가 아닐 수 있어요. 그럼 일꾼이 데이터보다 살짝 많아지고, 남는 일꾼이 <strong>배열 범위 밖</strong>을 건드리면 사고가 납니다. 그래서 "내 번호가 데이터 개수 안이면만 일해라"라고 막아주는 거예요. <strong>거의 모든 커널에 이 체크가 들어갑니다.</strong></p>
+    </div>
+
+    <h3>호스트(CPU) 쪽 — 커널을 실제로 부르는 코드</h3>
+    <p>커널을 짰으면, CPU 쪽에서 ① GPU 메모리 확보 → ② 데이터 복사(CPU→GPU) → ③ 커널 실행 → ④ 결과 회수(GPU→CPU) → ⑤ 정리, 이 순서로 부릅니다:</p>
+    <pre><code><span class="tok-key">int</span> n = <span class="tok-num">1</span>&lt;&lt;<span class="tok-num">20</span>;                  <span class="tok-com">// 약 100만 개</span>
+size_t bytes = n * <span class="tok-key">sizeof</span>(<span class="tok-key">float</span>);
+
+<span class="tok-com">// ① GPU(device) 메모리 확보 — 'd'는 device용이라는 관습적 표시</span>
+<span class="tok-key">float</span> *dA, *dB, *dC;
+<span class="tok-fn">cudaMalloc</span>(&dA, bytes);  <span class="tok-fn">cudaMalloc</span>(&dB, bytes);  <span class="tok-fn">cudaMalloc</span>(&dC, bytes);
+
+<span class="tok-com">// ② CPU(host) 데이터를 GPU로 복사</span>
+<span class="tok-fn">cudaMemcpy</span>(dA, hA, bytes, cudaMemcpyHostToDevice);
 <span class="tok-fn">cudaMemcpy</span>(dB, hB, bytes, cudaMemcpyHostToDevice);
 
-<span class="tok-key">int</span> threads = <span class="tok-num">256</span>;                            <span class="tok-com">// 블록당 스레드 (보통 128~512)</span>
-<span class="tok-key">int</span> blocks  = (n + threads - <span class="tok-num">1</span>) / threads; <span class="tok-com">// 올림 나눗셈</span>
-<span class="tok-fn">vecAdd</span>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(dA, dB, dC, n);   <span class="tok-com">// ← 커널 실행!</span>
+<span class="tok-com">// ③ 커널 실행! 일꾼을 몇 명, 몇 조로 만들지 정함</span>
+<span class="tok-key">int</span> threads = <span class="tok-num">256</span>;                            <span class="tok-com">// 블록당 일꾼 수 (보통 128~512)</span>
+<span class="tok-key">int</span> blocks  = (n + threads - <span class="tok-num">1</span>) / threads;   <span class="tok-com">// 필요한 블록 수 (올림 나눗셈)</span>
+<span class="tok-fn">vecAdd</span>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(dA, dB, dC, n);    <span class="tok-com">// ← 이 &lt;&lt;&lt; &gt;&gt;&gt; 가 CUDA 고유 문법</span>
 
-<span class="tok-fn">cudaMemcpy</span>(hC, dC, bytes, cudaMemcpyDeviceToHost); <span class="tok-com">// 결과 회수</span>
-<span class="tok-fn">cudaFree</span>(dA); <span class="tok-fn">cudaFree</span>(dB); <span class="tok-fn">cudaFree</span>(dC);</code></pre>
-    <p><code>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;</code>가 CUDA 특유의 <strong>실행 구성(launch configuration)</strong> 문법입니다. 이 실행이 실제로 어떻게 도는지는 <a href="execution.html">③ 실행 모델</a>에서 깊게 봅니다.</p>
+<span class="tok-com">// ④ 결과를 GPU에서 CPU로 회수  ⑤ 메모리 해제</span>
+<span class="tok-fn">cudaMemcpy</span>(hC, dC, bytes, cudaMemcpyDeviceToHost);
+<span class="tok-fn">cudaFree</span>(dA);  <span class="tok-fn">cudaFree</span>(dB);  <span class="tok-fn">cudaFree</span>(dC);</code></pre>
+    <p>
+      <code>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;</code>가 CUDA에서만 보이는 <strong>실행 구성(launch configuration)</strong> 문법입니다. "블록 몇 개, 블록당 스레드 몇 개로 일꾼을 펼쳐라"는 뜻이에요. 이 한 줄이 실제로 GPU 안에서 어떻게 처리되는지는 <a href="execution.html">③ 실행 모델</a>에서 낱낱이 파헤칩니다.
+    </p>
+    <div class="callout">
+      <div class="title">🤔 왜 복사(cudaMemcpy)를 해야 하나요?</div>
+      <p>보통 외장 GPU는 CPU와 <strong>메모리가 따로</strong>입니다(GPU는 자기 전용 VRAM 사용). 그래서 CPU 메모리의 데이터를 GPU가 보려면 <strong>PCIe라는 통로로 복사</strong>해와야 해요. 이 복사가 은근히 비싸서, "복사를 줄이는 것"도 최적화의 한 축입니다(<a href="execution.html#async">③장 스트림</a>).</p>
+    </div>
 
-    <h2 id="memory">2.3 메모리 관리</h2>
-    <h3>전통 방식 — 명시적 복사</h3>
-    <p>위처럼 <code>cudaMalloc</code> + <code>cudaMemcpy</code>로 host↔device를 명시적으로 복사합니다.</p>
-    <h3>Unified Memory</h3>
+    <h2 id="memory">2.3 메모리 관리 — 세 가지 방법</h2>
+    <h3>방법 1: 명시적 복사 (위에서 본 방식)</h3>
+    <p><code>cudaMalloc</code>으로 GPU 메모리를 잡고, <code>cudaMemcpy</code>로 직접 복사. 가장 기본이고, 무슨 일이 일어나는지 명확합니다.</p>
+
+    <h3>방법 2: Unified Memory — 편한 자동 방식</h3>
     <pre><code><span class="tok-key">float</span> *A;
-<span class="tok-fn">cudaMallocManaged</span>(&A, bytes);  <span class="tok-com">// CPU/GPU가 같은 포인터, 시스템이 자동 이동</span></code></pre>
+<span class="tok-fn">cudaMallocManaged</span>(&A, bytes);   <span class="tok-com">// CPU·GPU가 '같은 포인터'로 접근</span>
+<span class="tok-com">// 명시적 cudaMemcpy 없이 CPU에서 쓰고 GPU에서 읽기 가능</span>
+<span class="tok-com">// → 시스템이 필요할 때 알아서 데이터를 옮겨줌 (편하지만 성능 튜닝은 별도)</span></code></pre>
+    <p>입문할 때 편합니다. 단, 뒤에서 자동으로 복사가 일어나므로 성능이 항상 최적은 아니에요.</p>
+
+    <h3>방법 3: Pinned Memory — 빠른 전송용</h3>
     <div class="callout tip">
-      <div class="title">💡 Pinned Memory</div>
-      <p><code>cudaMallocHost</code>로 할당한 <strong>pinned(page-locked) memory</strong>는 전송이 빠르고 <strong>비동기 복사</strong>가 가능합니다. 스트림 overlap(<a href="execution.html#async">③</a>)의 전제 조건입니다.</p>
+      <div class="title">💡 Pinned(page-locked) memory</div>
+      <p>일반 <code>malloc</code> 대신 <code>cudaMallocHost</code>로 호스트 메모리를 잡으면, OS가 그 메모리를 못 옮기게 "핀으로 고정"합니다. 이러면 CPU↔GPU 전송이 <strong>더 빠르고, 비동기 복사가 가능</strong>해져요. <a href="execution.html#async">스트림으로 복사·연산을 겹치는 기법(③장)</a>의 필수 전제 조건입니다.</p>
     </div>
-    <h3>에러 체크는 습관처럼</h3>
-    <pre><code><span class="tok-pp">#define</span> <span class="tok-fn">CUDA_CHECK</span>(call) do { cudaError_t e=(call); \
-  <span class="tok-key">if</span>(e!=cudaSuccess){ <span class="tok-fn">fprintf</span>(stderr,<span class="tok-str">"%s:%d %s\n"</span>,__FILE__,__LINE__,<span class="tok-fn">cudaGetErrorString</span>(e)); <span class="tok-fn">exit</span>(<span class="tok-num">1</span>);} \
+
+    <h3>에러 체크는 꼭 습관으로</h3>
+    <p>CUDA 함수는 실패해도 조용히 넘어갈 때가 많아, 버그 잡기가 어렵습니다. 그래서 보통 매크로로 감싸 모든 호출을 체크합니다:</p>
+    <pre><code><span class="tok-pp">#define</span> <span class="tok-fn">CUDA_CHECK</span>(call) do { cudaError_t e = (call); \
+  <span class="tok-key">if</span> (e != cudaSuccess) { \
+    <span class="tok-fn">fprintf</span>(stderr, <span class="tok-str">"CUDA error %s:%d: %s\n"</span>, __FILE__, __LINE__, <span class="tok-fn">cudaGetErrorString</span>(e)); \
+    <span class="tok-fn">exit</span>(<span class="tok-num">1</span>); } \
 } <span class="tok-key">while</span>(<span class="tok-num">0</span>)
-<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaMalloc</span>(&dA, bytes));</code></pre>
 
-    <h2 id="sync">2.4 동기화 — 블록 안에서의 협력</h2>
-    <p>같은 블록의 스레드들은 협력할 수 있습니다 (다른 블록끼리는 커널 안에서 직접 동기화 불가).</p>
-    <ul>
-      <li><strong><code>__syncthreads()</code></strong> — 블록 내 모든 스레드가 이 지점에 도달할 때까지 대기 (배리어). shared memory를 함께 쓸 때 필수.</li>
-      <li><strong>아토믹 연산</strong> — <code>atomicAdd</code> 등으로 여러 스레드가 같은 주소를 안전하게 갱신 (경쟁 조건 방지). 단 경합 시 직렬화되니 남용 금지.</li>
-    </ul>
-    <pre><code><span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tile[<span class="tok-num">256</span>];
-tile[threadIdx.x] = A[idx];     <span class="tok-com">// 각자 shared에 적재</span>
-<span class="tok-fn">__syncthreads</span>();              <span class="tok-com">// 모두 적재 끝날 때까지 대기</span>
-<span class="tok-com">// 이제 tile을 안전하게 함께 사용</span></code></pre>
+<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaMalloc</span>(&dA, bytes));   <span class="tok-com">// 모든 CUDA 호출을 이렇게 감싸기</span></code></pre>
+
+    <h2 id="sync">2.4 동기화 — 같은 블록 일꾼들의 협력</h2>
+    <p>
+      같은 블록(같은 SM에 있는 일꾼들)은 <strong>서로 도울 수</strong> 있습니다. 단 다른 블록끼리는 커널 도중에 직접 협력할 수 없어요(서로 다른 공장에 있으니까요). 협력에 쓰는 두 도구:
+    </p>
+    <h3>① <code>__syncthreads()</code> — "다 모일 때까지 기다려"</h3>
+    <p>
+      블록 안 모든 스레드가 이 줄에 도착할 때까지 <strong>서로 기다리는 약속 장소(배리어)</strong>입니다. 공용 작업대(shared memory)에 데이터를 같이 채울 때 꼭 필요해요 — "다 채운 다음에 쓰자"를 보장하니까요.
+    </p>
+    <pre><code><span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tile[<span class="tok-num">256</span>];      <span class="tok-com">// 블록 공용 작업대</span>
+tile[threadIdx.x] = A[idx];        <span class="tok-com">// ① 각자 자기 칸을 채움</span>
+<span class="tok-fn">__syncthreads</span>();                 <span class="tok-com">// ② 모두 채울 때까지 대기 (이게 없으면 사고!)</span>
+<span class="tok-com">// ③ 이제 tile 전체를 안전하게 함께 사용 가능</span>
+<span class="tok-key">float</span> left = tile[threadIdx.x - <span class="tok-num">1</span>];</code></pre>
+    <h3>② 아토믹(atomic) 연산 — "겹치지 않게 안전하게 더하기"</h3>
+    <p>
+      여러 일꾼이 <strong>같은 메모리 칸</strong>을 동시에 갱신하면 값이 꼬입니다(예: 합 구하기). <code>atomicAdd</code> 같은 아토믹 연산은 "한 번에 한 명씩 안전하게" 갱신해줍니다. 단 경쟁이 심하면 줄서기(직렬화)가 생겨 느려지니 남용은 금물.
+    </p>
+    <pre><code><span class="tok-fn">atomicAdd</span>(&sum, value);   <span class="tok-com">// 여러 스레드가 sum을 안전하게 누적</span></code></pre>
     <div class="callout warn">
-      <div class="title">⚠️ 경쟁 조건(race)</div>
-      <p>여러 스레드가 동기화 없이 같은 메모리를 읽고 쓰면 결과가 비결정적입니다. shared memory 공유 패턴엔 <code>__syncthreads()</code>를, 누적엔 아토믹 또는 reduction 패턴을 쓰세요.</p>
+      <div class="title">⚠️ 경쟁 조건(race condition)이란</div>
+      <p>여러 일꾼이 약속(동기화) 없이 같은 메모리를 동시에 읽고 쓰면, <strong>실행할 때마다 결과가 달라지는</strong> 골치 아픈 버그가 생깁니다. 이걸 race condition이라고 해요. 공용 데이터를 다룰 땐 → <code>__syncthreads()</code>(작업대 공유) 또는 아토믹(누적)을 쓰는 습관을 들이세요.</p>
     </div>
 
     <div class="callout tip">
-      <div class="title">✅ ② 정리</div>
-      <p>커널은 <code>__global__</code>, 인덱스는 <code>blockIdx*blockDim+threadIdx</code>. <code>cudaMalloc/Memcpy</code>로 메모리 관리, 블록 내 협력은 <code>__syncthreads()</code>·아토믹. 다음은 "이 커널이 실제로 어떻게 실행되는가"입니다.</p>
+      <div class="title">✅ ② 장 정리</div>
+      <p>
+        ① 커널은 <code>__global__</code>로 표시, 내 데이터 칸은 <code>blockIdx*blockDim+threadIdx</code>로 계산.<br>
+        ② CPU 쪽에서 <code>cudaMalloc</code>→<code>cudaMemcpy</code>→<code>커널&lt;&lt;&lt;&gt;&gt;&gt;</code>→<code>cudaMemcpy</code> 순으로 부름.<br>
+        ③ 블록 안 협력은 <code>__syncthreads()</code>(기다리기)와 아토믹(안전한 누적).<br>
+        이제 "이 커널이 GPU 안에서 실제로 어떻게 실행되는가"를 볼 차례입니다.
+      </p>
     </div>
 
     <div class="pager">
