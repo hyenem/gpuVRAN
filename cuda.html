@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Part 2 · CUDA 프로그래밍 — GPU vRAN 노트</title>
+<meta name="description" content="CUDA 프로그래밍 모델, 첫 커널 작성, 메모리 관리, 스트림, 성능 최적화를 예제와 함께 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / Part 2</div>
+    <h1>Part 2 · CUDA 프로그래밍</h1>
+    <p class="lead">Part 1의 하드웨어 개념을 실제 코드로 다룹니다. CUDA는 C++ 확장이며, "어떤 데이터를 어떤 스레드가 처리할지" 매핑하는 것이 핵심입니다.</p>
+
+    <h2 id="model">2.1 프로그래밍 모델 — Grid / Block / Thread</h2>
+    <p>
+      CUDA에서 병렬 작업은 3단 계층으로 조직됩니다. 이 구조가 Part 1의 하드웨어(SM, warp)에 그대로 매핑됩니다.
+    </p>
+    <ul>
+      <li><strong>Thread</strong> — 가장 작은 실행 단위. 하나의 데이터 원소를 처리.</li>
+      <li><strong>Block (thread block)</strong> — 스레드의 묶음. 같은 블록 안의 스레드는 <strong>shared memory를 공유</strong>하고 동기화(<code>__syncthreads()</code>)할 수 있음. 하나의 SM에서 실행됨.</li>
+      <li><strong>Grid</strong> — 블록의 묶음. 커널 하나를 실행하면 grid 전체가 GPU에 펼쳐짐.</li>
+    </ul>
+    <pre><code><span class="tok-com">// 각 스레드는 자신의 전역 인덱스를 이렇게 계산한다</span>
+<span class="tok-type">int</span> idx = blockIdx.x * blockDim.x + threadIdx.x;
+<span class="tok-com">//        ↑ 몇 번째 블록    ↑ 블록 크기   ↑ 블록 내 위치</span></code></pre>
+    <div class="callout">
+      <div class="title">🧩 핵심 사고법</div>
+      <p>CUDA 프로그래밍 = "내가 처리할 데이터 배열의 인덱스를, 내 스레드 좌표(blockIdx, threadIdx)로부터 어떻게 계산할까?"를 정하는 일입니다. 나머지는 평범한 C++ 코드예요.</p>
+    </div>
+
+    <h2 id="first-kernel">2.2 첫 커널 — 벡터 덧셈</h2>
+    <p>
+      가장 기본적인 예제, 두 벡터를 더하는 <code>C = A + B</code>입니다. CPU와 GPU 코드를 비교해 보세요.
+    </p>
+    <pre><code><span class="tok-com">// ===== CPU 버전: 루프로 하나씩 =====</span>
+<span class="tok-key">void</span> <span class="tok-fn">vecAdd_cpu</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> i = <span class="tok-num">0</span>; i &lt; n; i++)
+        C[i] = A[i] + B[i];
+}
+
+<span class="tok-com">// ===== GPU 버전: 각 스레드가 원소 하나 담당 =====</span>
+<span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">vecAdd</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
+    <span class="tok-key">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+    <span class="tok-key">if</span> (i &lt; n)                 <span class="tok-com">// 배열 범위 넘는 스레드 보호</span>
+        C[i] = A[i] + B[i];
+}</code></pre>
+    <p>
+      <code>__global__</code>은 "GPU에서 실행되고 CPU에서 호출되는 함수(=커널)"라는 표시입니다. 루프가 사라진 게 핵심 — 루프 대신 <strong>수천 개의 스레드가 각자 한 원소씩</strong> 동시에 처리합니다.
+    </p>
+
+    <h3>호스트(CPU) 쪽 실행 코드</h3>
+    <pre><code><span class="tok-key">int</span> n = <span class="tok-num">1</span>&lt;&lt;<span class="tok-num">20</span>;                 <span class="tok-com">// 약 100만 개</span>
+size_t bytes = n * <span class="tok-key">sizeof</span>(<span class="tok-key">float</span>);
+
+<span class="tok-key">float</span> *dA, *dB, *dC;            <span class="tok-com">// GPU(device) 메모리 포인터</span>
+<span class="tok-fn">cudaMalloc</span>(&dA, bytes);
+<span class="tok-fn">cudaMalloc</span>(&dB, bytes);
+<span class="tok-fn">cudaMalloc</span>(&dC, bytes);
+
+<span class="tok-fn">cudaMemcpy</span>(dA, hA, bytes, cudaMemcpyHostToDevice);  <span class="tok-com">// CPU→GPU 복사</span>
+<span class="tok-fn">cudaMemcpy</span>(dB, hB, bytes, cudaMemcpyHostToDevice);
+
+<span class="tok-key">int</span> threads = <span class="tok-num">256</span>;                              <span class="tok-com">// 블록당 스레드 (보통 128~512)</span>
+<span class="tok-key">int</span> blocks  = (n + threads - <span class="tok-num">1</span>) / threads;   <span class="tok-com">// 올림 나눗셈</span>
+<span class="tok-fn">vecAdd</span>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(dA, dB, dC, n);    <span class="tok-com">// ← 커널 실행!</span>
+
+<span class="tok-fn">cudaMemcpy</span>(hC, dC, bytes, cudaMemcpyDeviceToHost);  <span class="tok-com">// GPU→CPU 결과 회수</span>
+<span class="tok-fn">cudaFree</span>(dA); <span class="tok-fn">cudaFree</span>(dB); <span class="tok-fn">cudaFree</span>(dC);</code></pre>
+    <p>
+      <code>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;</code>가 CUDA 특유의 <strong>실행 구성(launch configuration)</strong> 문법입니다. "블록 몇 개, 블록당 스레드 몇 개로 grid를 펼쳐라"는 뜻이죠.
+    </p>
+    <div class="callout warn">
+      <div class="title">⚠️ 비동기 주의</div>
+      <p>커널 실행(<code>&lt;&lt;&lt;&gt;&gt;&gt;</code>)은 <strong>비동기</strong>입니다 — CPU는 GPU 완료를 기다리지 않고 다음 줄로 갑니다. 결과가 필요하면 <code>cudaMemcpy</code>(자동 동기화) 또는 <code>cudaDeviceSynchronize()</code>로 기다려야 합니다. 이 비동기성이 나중에 성능의 무기가 됩니다(스트림).</p>
+    </div>
+
+    <h2 id="memory-mgmt">2.3 메모리 관리</h2>
+    <p>전통적 방식은 위처럼 <code>cudaMalloc</code> + <code>cudaMemcpy</code>로 명시적 복사를 합니다. 더 편한 방법도 있습니다.</p>
+
+    <h3>Unified Memory (통합 메모리)</h3>
+    <pre><code><span class="tok-key">float</span> *A;
+<span class="tok-fn">cudaMallocManaged</span>(&A, bytes);   <span class="tok-com">// CPU/GPU가 같은 포인터로 접근</span>
+<span class="tok-com">// 명시적 cudaMemcpy 없이 CPU에서 쓰고 GPU에서 읽기 가능</span>
+<span class="tok-com">// → 시스템이 필요할 때 자동으로 페이지 이동 (편하지만 성능 튜닝은 별도)</span></code></pre>
+    <div class="callout tip">
+      <div class="title">💡 Pinned Memory</div>
+      <p>일반(pageable) 호스트 메모리 대신 <code>cudaMallocHost</code>로 할당한 <strong>pinned memory</strong>를 쓰면 CPU↔GPU 전송이 빨라지고 비동기 복사가 가능해집니다. vRAN처럼 데이터를 계속 흘려보내는(streaming) 워크로드에서 중요합니다.</p>
+    </div>
+
+    <h3>에러 체크는 습관처럼</h3>
+    <pre><code><span class="tok-pp">#define</span> <span class="tok-fn">CUDA_CHECK</span>(call) do { \
+    cudaError_t e = (call); \
+    <span class="tok-key">if</span> (e != cudaSuccess) { \
+        <span class="tok-fn">fprintf</span>(stderr, <span class="tok-str">"CUDA error %s:%d: %s\n"</span>, \
+            __FILE__, __LINE__, <span class="tok-fn">cudaGetErrorString</span>(e)); \
+        <span class="tok-fn">exit</span>(<span class="tok-num">1</span>); \
+    } \
+} <span class="tok-key">while</span>(<span class="tok-num">0</span>)
+
+<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaMalloc</span>(&dA, bytes));   <span class="tok-com">// 모든 CUDA 호출을 감싸기</span></code></pre>
+
+    <h2 id="streams">2.4 스트림 · 비동기 — 처리량의 핵심</h2>
+    <p>
+      <strong>CUDA 스트림</strong>은 GPU 작업의 "작업 큐"입니다. 같은 스트림 안의 작업은 순서대로, <strong>다른 스트림끼리는 병렬로</strong> 실행됩니다. 이를 이용해 "데이터 전송"과 "연산"을 겹쳐(overlap) 숨길 수 있습니다.
+    </p>
+    <pre><code>cudaStream_t s1, s2;
+<span class="tok-fn">cudaStreamCreate</span>(&s1);
+<span class="tok-fn">cudaStreamCreate</span>(&s2);
+
+<span class="tok-com">// 청크 0은 s1에서, 청크 1은 s2에서 — 전송과 연산이 겹쳐 돌아감</span>
+<span class="tok-fn">cudaMemcpyAsync</span>(dA0, hA0, sz, cudaMemcpyHostToDevice, s1);
+<span class="tok-fn">kernel</span>&lt;&lt;&lt;b, t, <span class="tok-num">0</span>, s1&gt;&gt;&gt;(dA0);
+
+<span class="tok-fn">cudaMemcpyAsync</span>(dA1, hA1, sz, cudaMemcpyHostToDevice, s2);
+<span class="tok-fn">kernel</span>&lt;&lt;&lt;b, t, <span class="tok-num">0</span>, s2&gt;&gt;&gt;(dA1);</code></pre>
+    <div class="callout">
+      <div class="title">📡 vRAN과의 연결</div>
+      <p>vRAN은 무선 신호가 끊임없이 들어오는 <strong>파이프라인</strong>입니다. 스트림으로 "안테나 데이터 수신 → 신호처리 → 결과 송출"을 겹쳐 돌려 지연을 최소화하는 것이 핵심 기술입니다. <a href="vran.html#realtime">Part 3의 실시간 제약</a>과 직결됩니다.</p>
+    </div>
+
+    <h3>CUDA Graphs</h3>
+    <p>
+      매번 같은 커널·복사 순서를 반복한다면, 이를 하나의 <strong>그래프로 캡처</strong>해 launch 오버헤드를 줄일 수 있습니다. μs 단위 지연이 중요한 vRAN L1 파이프라인에서 실제로 쓰이는 기법입니다.
+    </p>
+
+    <h2 id="optimize">2.5 성능 최적화 체크리스트</h2>
+    <p>Part 1의 하드웨어 지식이 여기서 실전이 됩니다. 우선순위 순으로:</p>
+    <ol>
+      <li><strong>메모리 병합(coalescing)</strong> — 스레드 i가 배열 i를 읽게. 가장 효과 큼.</li>
+      <li><strong>Shared memory 재사용</strong> — 반복 접근 데이터를 올려두고 재사용(타일링).</li>
+      <li><strong>Occupancy 확보</strong> — 블록 크기·레지스터 사용량 조절로 SM에 충분한 warp 올리기.</li>
+      <li><strong>분기 최소화</strong> — warp 내 divergence 줄이기.</li>
+      <li><strong>전송 숨기기</strong> — 스트림으로 복사·연산 overlap, pinned memory 사용.</li>
+      <li><strong>라이브러리 활용</strong> — 직접 짜기 전에 <code>cuBLAS</code>, <code>cuFFT</code>, <code>CUTLASS</code>를 먼저 고려.</li>
+    </ol>
+
+    <h3>shared memory 타일링 맛보기 (행렬 곱)</h3>
+    <pre><code><span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">matmul</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> N) {
+    <span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tileA[<span class="tok-num">16</span>][<span class="tok-num">16</span>];   <span class="tok-com">// 블록 안에서 공유</span>
+    <span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tileB[<span class="tok-num">16</span>][<span class="tok-num">16</span>];
+    <span class="tok-key">int</span> row = blockIdx.y*<span class="tok-num">16</span> + threadIdx.y;
+    <span class="tok-key">int</span> col = blockIdx.x*<span class="tok-num">16</span> + threadIdx.x;
+    <span class="tok-key">float</span> sum = <span class="tok-num">0</span>;
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> t = <span class="tok-num">0</span>; t &lt; N/<span class="tok-num">16</span>; t++) {
+        tileA[threadIdx.y][threadIdx.x] = A[row*N + t*<span class="tok-num">16</span>+threadIdx.x];
+        tileB[threadIdx.y][threadIdx.x] = B[(t*<span class="tok-num">16</span>+threadIdx.y)*N + col];
+        <span class="tok-fn">__syncthreads</span>();             <span class="tok-com">// 타일 로딩 완료 대기</span>
+        <span class="tok-key">for</span> (<span class="tok-key">int</span> k = <span class="tok-num">0</span>; k &lt; <span class="tok-num">16</span>; k++)
+            sum += tileA[threadIdx.y][k] * tileB[k][threadIdx.x];
+        <span class="tok-fn">__syncthreads</span>();             <span class="tok-com">// 다음 타일 덮어쓰기 전 대기</span>
+    }
+    C[row*N + col] = sum;
+}</code></pre>
+    <p>
+      각 원소를 global memory에서 매번 읽는 대신, 16×16 타일을 shared memory에 한 번 올려 재사용합니다. 메모리 접근이 수십 배 줄어 성능이 크게 오릅니다.
+    </p>
+
+    <div class="callout tip">
+      <div class="title">🛠️ 실습 환경</div>
+      <p>GPU가 없어도 괜찮습니다. <strong>Google Colab</strong>(무료 GPU 런타임)에서 <code>%%writefile add.cu</code>로 코드를 쓰고 <code>!nvcc add.cu -o add &amp;&amp; ./add</code>로 바로 컴파일·실행할 수 있어요. 프로파일링은 <code>nsys</code>(Nsight Systems), <code>ncu</code>(Nsight Compute)를 사용합니다.</p>
+    </div>
+
+    <div class="callout tip">
+      <div class="title">✅ Part 2 정리</div>
+      <p>① 커널은 <code>__global__</code>, 인덱스는 <code>blockIdx*blockDim+threadIdx</code>. ② <code>cudaMalloc/Memcpy</code>로 메모리 관리, 커널은 비동기. ③ 스트림으로 전송·연산 overlap. ④ 최적화는 coalescing &gt; shared memory &gt; occupancy 순. 이제 이걸 vRAN에 적용할 차례입니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="gpu-architecture.html"><div class="dir">← 이전</div><div class="ttl">Part 1 · GPU 아키텍처</div></a>
+      <a class="next" href="vran.html"><div class="dir">다음 →</div><div class="ttl">Part 3 · GPU vRAN 가속</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
