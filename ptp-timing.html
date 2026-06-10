@@ -37,7 +37,9 @@
       <a href="ptp-timing.html#domains" class="sub">두 시계 도메인</a>
       <a href="ptp-timing.html#ptp" class="sub">PTP · GPS 동기</a>
       <a href="ptp-timing.html#window" class="sub">전송 윈도우</a>
+      <a href="ptp-timing.html#rx" class="sub">수신 시간 정렬 처리</a>
       <a href="ptp-timing.html#before-after" class="sub">시간 배포 구조 변화</a>
+      <a href="ptp-timing.html#time-access" class="sub">다른 모듈의 시간 접근</a>
       <a href="ptp-timing.html#slot" class="sub">GPU는 슬롯으로 일한다</a>
       <a href="ptp-timing.html#checklist" class="sub">재설계 체크리스트</a>
     </nav>
@@ -125,7 +127,73 @@
       <p>예제 코드: <a href="https://github.com/NVIDIA/5t5g" target="_blank" rel="noopener">NVIDIA/5t5g (GitHub)</a> — DPDK 앱에서 슬롯 시각에 패킷을 정확히 쏘는 법을 보여줍니다.</p>
     </div>
 
-    <h2 id="before-after">4. ★ 시간 배포 구조의 변화 (Before / After)</h2>
+    <h2 id="rx">4. 수신 패킷의 시간 정렬 처리 (RX)</h2>
+    <p>
+      TX가 "정확한 시각에 쏘기"였다면, RX는 <strong>"제때 도착한 패킷을 올바른 슬롯에 모아 마감 안에 처리하기"</strong>입니다. 핵심 반전 — <strong>도착 시각으로 슬롯을 판단하지 않습니다. 패킷 헤더가 자기가 어느 슬롯/심볼인지 직접 알려줍니다.</strong>
+    </p>
+
+    <h3>① 받은 패킷은 자기 정체를 안다</h3>
+    <p>O-RAN U-plane(eCPRI) 패킷에는 헤더가 붙어 있습니다:</p>
+    <ul>
+      <li><strong>eAxC ID</strong> — 어느 안테나/캐리어 스트림인지</li>
+      <li><strong>frameId / subframeId / slotId / startSymbolId</strong> — 어느 프레임·슬롯·심볼인지</li>
+      <li><strong>section (startPrbu, numPrbu)</strong> — 어느 주파수 자원(PRB)인지 + 그 뒤 <strong>IQ 샘플</strong></li>
+    </ul>
+    <p>거기에 <strong>NIC이 찍는 하드웨어 RX 타임스탬프(PHC 시각)</strong>가 더해집니다. 그래서 패킷이 순서 뒤바뀌어 와도, 늦게 와도 — <strong>헤더만 보고 "슬롯 N, 심볼 M, PRB k"에 제자리로 꽂으면</strong> 됩니다. 도착 순서는 중요하지 않습니다.</p>
+
+    <h3>② 수신 처리 흐름</h3>
+    <pre><code>RU ──(eCPRI U-plane)──▶ [NIC]
+                          │ ⓐ HW 타임스탬프 + flow steering(eAxC ID로 분류)
+                          │ ⓑ GPUDirect로 GPU 메모리에 직접 DMA
+                          ▼
+                  [슬롯/심볼 인덱스 버퍼]  ← ⓒ 헤더대로 제자리에 배치(reorder)
+                          │
+                          ▼  ⓓ 슬롯 N의 "처리 데드라인"에 트리거
+                  [GPU 파이프라인]  FFT→채널추정→등화→디매핑→LDPC</code></pre>
+    <p>핵심은 ⓒ — <strong>도착하는 대로 슬롯 버퍼의 올바른 위치(offset)에 헤더 기준으로 채워 넣는</strong> 것입니다. 쓰는 위치가 곧 정렬이라, 별도 정렬 단계가 없습니다.</p>
+
+    <h3>③ 언제 GPU를 깨우나 — 두 트리거</h3>
+    <table>
+      <thead><tr><th>방식</th><th>동작</th><th>특징</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Time-triggered</strong></td><td>PHC에서 파생한 타이머가 슬롯 데드라인에 발火 → 처리 시작</td><td>결정론적 (선호)</td></tr>
+        <tr><td><strong>Data-triggered</strong></td><td>"슬롯 N 마지막 심볼 도착" 이벤트로 시작</td><td>빠르나 늦은 패킷에 취약</td></tr>
+      </tbody>
+    </table>
+    <p>실무는 보통 <strong>하이브리드</strong> — 데이터로 일찍 시작하되 <strong>데드라인 타이머가 안전망</strong>. "슬롯 N 패킷은 PHC 시각 T까지 다 와야 한다"는 윈도우(<strong>Ta4</strong>)를 PHC에서 계산해 두고, 그 시각이 되면 <strong>안 온 패킷을 기다리지 않고 처리를 시작</strong>합니다.</p>
+
+    <div class="callout warn">
+      <div class="title">⚠️ 늦거나 빠진 패킷 — 데드라인이 완결성보다 우선</div>
+      <p>vRAN 철칙: <strong>기다리면 죽는다.</strong> 마감을 넘기면 HARQ 타이밍을 못 맞춰 슬롯 전체가 무효가 됩니다. 그래서 데드라인까지 안 온 패킷은 <strong>erasure(소실)로 처리</strong> — 해당 RE를 0/미상으로 두고 진행하며, LDPC·채널코딩이 일정 소실을 복구합니다. <strong>"완전한 데이터를 늦게"가 아니라 "불완전해도 제때"</strong>가 정답입니다.</p>
+    </div>
+
+    <h3>④ 처리 자체에 지터가 없게 — 결정론</h3>
+    <ul>
+      <li><strong>Persistent kernel / CUDA Graphs</strong> — 매 슬롯 커널 launch 오버헤드·지터 제거. 커널을 띄워두고 슬롯만 받음.</li>
+      <li><strong>더블 버퍼링(ping-pong)</strong> — 슬롯 N 처리 중 슬롯 N+1 패킷이 다른 버퍼에 쌓임.</li>
+      <li><strong>고정 예산</strong> — UL 처리는 HARQ 데드라인(n+k 슬롯) 안에 끝나야 하므로 슬롯당 시간(수백 µs)이 고정.</li>
+    </ul>
+
+    <h3>⑤ NIC이 직접 하는가? — 하드웨어/소프트웨어 역할 분담</h3>
+    <p>"NIC이 이걸 다 직접 하나?"의 답은 <strong>부분적으로 예</strong>입니다. 타이밍·전송 원시기능은 NIC 하드웨어가, 내용 해석·배치·트리거는 소프트웨어(또는 DPU)가 합니다.</p>
+    <table>
+      <thead><tr><th>기능</th><th>누가</th></tr></thead>
+      <tbody>
+        <tr><td>PHC(PTP 하드웨어 시계), HW 타임스탬프, Boundary Clock</td><td><strong>NIC HW</strong> ✅</td></tr>
+        <tr><td>Flow steering (eAxC ID로 큐 분류)</td><td><strong>NIC HW</strong> ✅</td></tr>
+        <tr><td>GPUDirect 직접 DMA (GPU 메모리에 적재)</td><td><strong>NIC HW</strong> ✅</td></tr>
+        <tr><td>Accurate Send Scheduling (TX 정밀 송신)</td><td><strong>NIC HW</strong> ✅</td></tr>
+        <tr><td>O-RAN 헤더 파싱 → 슬롯/심볼/PRB 오프셋 배치(reorder)</td><td>SW(DPDK) 또는 DPU/GPU ⚠️</td></tr>
+        <tr><td>IQ 압축 해제 (BFP 등)</td><td>GPU 또는 DPU 가속기 ⚠️</td></tr>
+        <tr><td>슬롯 데드라인 타이머로 GPU 깨우기</td><td>SW(CPU 스레드/GPU) ⚠️</td></tr>
+        <tr><td>신호처리(FFT·LDPC…)</td><td>GPU</td></tr>
+      </tbody>
+    </table>
+    <p>
+      NIC은 "이 패킷을 큐 3번으로" 까진 하지만, "이 IQ를 슬롯 N 심볼 M에 압축 풀어 채워라" 같은 <strong>의미 기반 배치</strong>는 못 합니다 — 프로그래머블한 주체가 필요하죠. 그 한계를 메우는 게 <strong>DPU(BlueField)</strong>: ConnectX의 HW 오프로드에 <strong>Arm 코어 + 가속기</strong>를 얹어, ⚠️ 항목 상당수를 <strong>호스트 CPU에서 카드 위로</strong> 옮깁니다. NVIDIA Aerial은 ConnectX/BlueField + GPU를 이렇게 묶은 것입니다.
+    </p>
+
+    <h2 id="before-after">5. ★ 시간 배포 구조의 변화 (Before / After)</h2>
     <p>
       여기가 당신의 현재 구조와 직결되는 부분입니다. 지금은 <strong>CPU 시스템 시계가 단일 진실원</strong>이고, 응용이 그걸 읽어 소프트웨어로 각 모듈에 슬롯 타이밍을 뿌립니다.
     </p>
@@ -162,7 +230,24 @@ PTP ───────┘                          ├─▶ (Accurate Send S
       <p>바꿔야 합니다. 즉 "한 모듈이 시간을 계산해 뿌리는" 푸시(push) 구조에서, "공통 PHC를 기준으로 각자 끌어오는" 풀(pull) 구조로 바뀝니다.</p>
     </div>
 
-    <h2 id="slot">5. 결정적 포인트 — GPU는 절대 시각을 안 본다</h2>
+    <h3 id="time-access">다른 모듈은 시간을 어떻게 받나 (CPU 모듈 포함)</h3>
+    <p>
+      "그럼 다른 CPU 모듈도 NIC에 접근해 시간을 가져갈 수 있나?" — <strong>네, 됩니다. 두 가지 방법으로.</strong> 핵심은 <strong>진실원이 NIC PHC 하나</strong>이고, 모두가 그걸 참조한다는 점입니다.
+    </p>
+    <table>
+      <thead><tr><th>방법</th><th>어떻게</th><th>언제</th></tr></thead>
+      <tbody>
+        <tr><td><strong>① 간접 (권장·기본)</strong></td><td><code>phc2sys</code>가 PHC↔시스템시계(<code>CLOCK_TAI</code>/<code>REALTIME</code>)를 정렬 → 모듈은 평소처럼 시스템시계만 읽으면 이미 PHC에 동기됨</td><td>대부분의 CPU 모듈 (제어·로그·OAM)</td></tr>
+        <tr><td><strong>② 직접</strong></td><td><code>/dev/ptpN</code>을 열어 <code>clock_gettime()</code>(동적 POSIX 클럭) 또는 PTP ioctl로 PHC를 직접 읽음</td><td>더 타이트한 정렬이 필요한 모듈</td></tr>
+      </tbody>
+    </table>
+    <div class="callout tip">
+      <div class="title">💡 핵심 — 모두가 NIC을 직접 찌를 필요는 없다</div>
+      <p>
+        <code>phc2sys</code>가 PHC를 시스템시계에 흘려주므로, <strong>CPU 모듈들은 그냥 시스템시계(CLOCK_TAI)를 읽기만 해도 PHC에 동기된 시각</strong>을 얻습니다. 당신이 지금 "한 모듈이 시간을 계산해 뿌리던" 일을, 이제 <strong>phc2sys가 OS 차원에서 대신</strong>해 주는 셈이죠 (push → 공통 참조 pull). 단, 소프트웨어 클럭 읽기는 <strong>지터가 µs 수준</strong>이라 제어용엔 충분해도 <strong>데이터 평면 슬롯 타이밍엔 부적합</strong> — 그건 4절의 HW 타임스탬프를 씁니다. 또한 NIC이 여러 개면 <strong>PHC도 여러 개</strong>이니, 하나를 마스터로 정하고 나머지를 규율해 <strong>시간 도메인을 하나로</strong> 유지해야 합니다.</p>
+    </div>
+
+    <h2 id="slot">6. 결정적 포인트 — GPU는 절대 시각을 안 본다</h2>
     <p>
       GPU는 PTP에 동기된 실시간 시계가 없고, 필요도 없습니다. 역할이 분리되기 때문입니다:
     </p>
@@ -178,7 +263,7 @@ PTP ───────┘                          ├─▶ (Accurate Send S
       그래서 당신이 지금 SW로 모듈마다 슬롯 시각을 뿌리던 일을, 데이터 평면에선 <strong>NIC 하드웨어가 패킷 단위로 대신</strong>합니다. GPU는 절대 시각을 몰라도 슬롯 인덱스만으로 정확히 동작합니다.
     </p>
 
-    <h2 id="checklist">6. 재설계 체크리스트</h2>
+    <h2 id="checklist">7. 재설계 체크리스트</h2>
     <ol>
       <li><strong>시간 진실원 재배치</strong> — CPU 시스템 시계 → NIC PHC 기준. <code>phc2sys</code>로 PHC↔시스템시계 정렬은 유지(제어용).</li>
       <li><strong>슬롯 타이밍 배포 모듈 개조 (b 케이스)</strong> — SW 푸시 브로드캐스트 제거 → PHC 공통 앵커 + HW 타임스탬프 기반 풀 구조로.</li>
