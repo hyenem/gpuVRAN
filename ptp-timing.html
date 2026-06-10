@@ -40,6 +40,7 @@
       <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
       <a href="ptp-timing.html#domains" class="sub">두 시계 도메인</a>
       <a href="ptp-timing.html#flow" class="sub">시간 흐름 구조도</a>
+      <a href="ptp-timing.html#clocks" class="sub">세 개의 시계</a>
       <a href="ptp-timing.html#ptp" class="sub">PTP · GPS 동기</a>
       <a href="ptp-timing.html#window" class="sub">전송 윈도우</a>
       <a href="ptp-timing.html#rx" class="sub">수신 시간 정렬 처리</a>
@@ -47,6 +48,7 @@
       <a href="ptp-timing.html#time-access" class="sub">다른 모듈의 시간 접근</a>
       <a href="ptp-timing.html#slot" class="sub">GPU는 슬롯으로 일한다</a>
       <a href="ptp-timing.html#checklist" class="sub">재설계 체크리스트</a>
+      <a href="realtime.html">실시간 결정론 기법</a>
     </nav>
     <nav class="nav-group">
       <h4>Part 2 · CUDA</h4>
@@ -174,6 +176,25 @@
         <text class="dim" x="440" y="536" text-anchor="middle">NIC이 PHC ↔ SFN(슬롯 번호)를 다리로 연결한다</text>
       </svg>
       <div class="figcap">그림 — vRAN 시간 흐름: GPS/PTP → NIC PHC(진실원) → 제어(SW)·RX·TX 분배</div>
+    </div>
+
+    <h3 id="clocks">세 개의 시계 — GPU 시간 ≠ CPU 시간</h3>
+    <p>구조도에서 자주 나오는 질문: "제어 평면(SW)은 CPU인데, 그럼 <strong>GPU가 쓰는 시간과 CPU 시간은 같나?</strong>" 답은 — 시계가 사실 3개 있고, <strong>GPU는 절대 시간을 아예 안 씁니다.</strong></p>
+    <table>
+      <thead><tr><th>시계</th><th>동기 상태</th><th>정체</th></tr></thead>
+      <tbody>
+        <tr><td><strong>NIC PHC</strong></td><td>GPS/PTP에 직접 규율</td><td>진짜 기준 (절대시각)</td></tr>
+        <tr><td><strong>CPU 시스템시계</strong></td><td><code>phc2sys</code>가 PHC에 맞춤</td><td>PHC의 사본 (오차 수십 ns~sub-µs)</td></tr>
+        <tr><td><strong>GPU 내부 타이머</strong></td><td>❌ 아무것에도 동기 안 됨</td><td>free-running 카운터 (경과시간 측정용)</td></tr>
+      </tbody>
+    </table>
+    <ul>
+      <li><strong>CPU 시간 ≈ PHC</strong> — phc2sys가 맞춰주므로 <em>거의</em> 같음 (servo 오차 + SW 읽기 지터 때문에 "정확히"는 아님).</li>
+      <li><strong>GPU 시간 ≠ CPU/PHC</strong> — GPU의 <code>clock64()</code>/globaltimer는 독립 오실레이터라 PTP에 동기 안 되고, 값도 다르며 시간이 가면 <strong>drift</strong>. GPU엔 "PTP 동기 절대 시계"가 기본 제공되지 않음.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="title">💡 그래서 GPU는 슬롯 인덱스로 우회</div>
+      <p>GPU 시간과 CPU 시간을 맞추려 하지 않습니다. GPU는 "지금 몇 시"가 아니라 <strong>"슬롯 N을 처리하라"</strong>만 받고, <strong>"언제"(절대시각)는 NIC(PHC + Send Scheduling)나 CPU(PHC 동기 시계)가</strong> 책임집니다. 즉 "GPU 시간 == CPU 시간?"이라는 질문 자체가 성립하지 않도록 시간 책임을 GPU 밖으로 빼낸 게 설계의 핵심입니다. (GPU에서 절대 타임스탬프가 필요하면 GPU 타이머↔PHC 오프셋을 측정·주기 재보정해야 하며 drift를 감수해야 합니다.)</p>
     </div>
 
     <h2 id="ptp">2. PTP · GPS 시간 동기 (S-plane)</h2>
@@ -320,6 +341,27 @@ PTP ───────┘                          ├─▶ (Accurate Send S
         <li>각 소비자(GPU 파이프라인, 송신 스케줄러)가 <strong>하드웨어 타임스탬프 + PHC↔SFN 매핑</strong>에서 슬롯 타이밍을 직접 끌어오게</li>
       </ul>
       <p>바꿔야 합니다. 즉 "한 모듈이 시간을 계산해 뿌리는" 푸시(push) 구조에서, "공통 PHC를 기준으로 각자 끌어오는" 풀(pull) 구조로 바뀝니다.</p>
+    </div>
+
+    <h3 id="why-central">왜 예전엔 중앙에서 뿌렸나 — 그 역할은 어디로?</h3>
+    <p>"기존엔 한 모듈이 시간을 뿌렸는데 이제 각자 가져가라고?" — 중앙 배포엔 분명한 이유가 있었고, <strong>그 이유는 사라지지 않습니다.</strong></p>
+    <ul>
+      <li><strong>단일 규율(servo) 소스</strong> — PTP/GPS 보정 루프는 한 곳에만. 모듈마다 servo 돌리면 제각각 drift.</li>
+      <li><strong>일관성</strong> — 모두가 같은 값/에폭 참조 → 어긋남 방지.</li>
+      <li><strong>하드웨어 추상화</strong> — 다른 모듈은 GPS/PTP 하드웨어를 몰라도 됨.</li>
+      <li><strong>시계 접근 없는 모듈</strong> — PHC/PPS를 직접 못 읽는 프로세서는 받아야만 함.</li>
+      <li><strong>프레임 틱/에폭 배포</strong> — 단순 시각이 아니라 슬롯 경계 정렬용 동기 스트로브일 수도.</li>
+    </ul>
+    <p>GPU vRAN에선 이 중앙 배포가 <strong>사라지는 게 아니라 승격·표준화</strong>됩니다. 모두가 읽는 시스템시계는 <code>phc2sys</code>가 <strong>NIC PHC에 맞춰 규율한 단 하나의 소스</strong> — 각 모듈이 자기 servo를 돌리는 게 아니라 중앙에서 규율된 값을 읽는 것입니다. 당신 모듈의 두 역할(① 단일 규율 소스 ② 배포)이 <strong>PHC(HW) + ptp4l/phc2sys(OS)</strong>로 흡수돼, 더 견고한 곳으로 옮겨갑니다.</p>
+    <div class="callout warn">
+      <div class="title">⚠️ 단, 무엇을 뿌렸느냐가 갈림길</div>
+      <table>
+        <thead><tr><th>뿌린 것</th><th>GPU vRAN에서</th></tr></thead>
+        <tbody>
+          <tr><td><strong>시각 값</strong> (time of day, 거친 시간)</td><td><code>phc2sys</code> + <code>CLOCK_TAI</code>로 깔끔히 대체 → 각자 읽기 OK</td></tr>
+          <tr><td><strong>프레임 틱 / 슬롯 에폭</strong> (동기 스트로브)</td><td>"각자 시계 읽기"로 <strong>안 됨</strong> → NIC HW 타임스탬프(RX) + Accurate Send Scheduling(TX) + SFN↔PHC 에폭 조정점으로 이전</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <h3 id="time-access">다른 모듈은 시간을 어떻게 받나 (CPU 모듈 포함)</h3>

@@ -37,6 +37,13 @@
   {"title":"다른 모듈의 시간 접근","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#time-access","text":"다른 모듈 cpu 시간 접근 phc2sys clock_tai clock_realtime /dev/ptp clock_gettime 직접 간접 도메인"},
   {"title":"GPU는 슬롯으로 일한다","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#slot","text":"gpu 슬롯 인덱스 절대 시각 sfn 앵커링 도메인 분리 결정적"},
   {"title":"재설계 체크리스트","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#checklist","text":"재설계 체크리스트 nic dpu phc 슬롯 앵커링 결정론 측정 검증 tae 튜닝 numa isolation"},
+  {"title":"세 개의 시계 (GPU≠CPU 시간)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#clocks","text":"세 시계 gpu cpu phc 시간 동일 다름 free-running drift 절대 시각 globaltimer clock64 oscillator"},
+  {"title":"왜 중앙에서 뿌렸나","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#why-central","text":"중앙 배포 시간 모듈 이유 단일 servo 규율 일관성 프레임 틱 에폭 phc2sys 승격"},
+  {"title":"실시간 결정론 기법","section":"심화 · 데이터 이동","url":"realtime.html","text":"실시간 결정론 determinism tail latency 지터 슬롯 마감 기법"},
+  {"title":"왜 결정론인가","section":"실시간 결정론 기법","url":"realtime.html#why","text":"결정론 tail latency 최악 지연 슬롯 harq 마감 지터 jitter"},
+  {"title":"GPU 결정론 기법","section":"실시간 결정론 기법","url":"realtime.html#gpu","text":"cuda graphs persistent kernel 스트림 overlap gpudirect pinned memory launch 오버헤드"},
+  {"title":"시스템·OS 결정론 기법","section":"실시간 결정론 기법","url":"realtime.html#system","text":"코어 격리 isolcpus preempt_rt 실시간 커널 numa hugepages busy poll c-state irq affinity"},
+  {"title":"무엇이 무엇을 잡나","section":"실시간 결정론 기법","url":"realtime.html#map","text":"매핑 연산 지연 os 지터 이동 지연 기법 정리 표"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
   {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},

@@ -40,6 +40,7 @@
       <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
       <a href="case-studies.html">실전 사례: 두 진영</a>
       <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
+      <a href="realtime.html">실시간 결정론 기법</a>
     </nav>
     <nav class="nav-group">
       <h4>Part 2 · CUDA</h4>
@@ -186,8 +187,7 @@
     <div class="callout warn">
       <div class="title">⚠️ 그래서 필요한 기법들</div>
       <p>
-        Part 2에서 배운 <a href="cuda.html#streams">스트림 overlap</a>, <strong>CUDA Graphs</strong>(launch 오버헤드 제거), <strong>persistent kernel</strong>(커널을 계속 띄워두고 일감을 받기), <strong>GPUDirect</strong>(NIC→GPU 직접 DMA로 CPU 우회), <strong>pinned memory</strong>가 모두 이 지연 예산을 맞추기 위해 동원됩니다. CPU 코어 격리(isolcpus), 실시간 커널, NUMA 배치 같은 시스템 튜닝도 함께 갑니다.
-      </p>
+        Part 2에서 배운 <a href="cuda.html#streams">스트림 overlap</a>, <strong>CUDA Graphs</strong>(launch 오버헤드 제거), <strong>persistent kernel</strong>(커널을 계속 띄워두고 일감을 받기), <strong>GPUDirect</strong>(NIC→GPU 직접 DMA로 CPU 우회), <strong>pinned memory</strong>가 모두 이 지연 예산을 맞추기 위해 동원됩니다. CPU 코어 격리(isolcpus), 실시간 커널, NUMA 배치 같은 시스템 튜닝도 함께 갑니다. <a href="realtime.html">→ 각 기법을 디테일하게 정리한 페이지</a></p>
     </div>
 
     <table>
