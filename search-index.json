@@ -44,6 +44,11 @@
   {"title":"GPU 결정론 기법","section":"실시간 결정론 기법","url":"realtime.html#gpu","text":"cuda graphs persistent kernel 스트림 overlap gpudirect pinned memory launch 오버헤드"},
   {"title":"시스템·OS 결정론 기법","section":"실시간 결정론 기법","url":"realtime.html#system","text":"코어 격리 isolcpus preempt_rt 실시간 커널 numa hugepages busy poll c-state irq affinity"},
   {"title":"무엇이 무엇을 잡나","section":"실시간 결정론 기법","url":"realtime.html#map","text":"매핑 연산 지연 os 지터 이동 지연 기법 정리 표"},
+  {"title":"경계 설계: 버퍼 & 분할","section":"심화 · 데이터 이동","url":"boundary.html","text":"cpu gpu 경계 버퍼 수명 mbuf free 작업 분할 partition"},
+  {"title":"mbuf는 언제 free하나","section":"경계 설계","url":"boundary.html#buffer","text":"mbuf free dpdk refcnt 참조 카운트 완료 cuda event 완료 기반 gpudirect mempool 고갈 use-after-free gpudev gpunetio external buffer"},
+  {"title":"완료 기반 free","section":"경계 설계","url":"boundary.html#completion","text":"완료 completion cuda event cudalaunchhostfunc 세마포어 호스트 프록시 시간 기반 위험 트리거"},
+  {"title":"CPU-GPU 작업 분할","section":"경계 설계","url":"boundary.html#partition","text":"cpu gpu 분할 partition packet size 크로스오버 저부하 prb inline lookaside 결합"},
+  {"title":"분할 축과 숨은 비용","section":"경계 설계","url":"boundary.html#hidden","text":"분할 축 기능 셀 캐리어 평면 부하 적응 데이터 지역성 병합 동기 오버헤드 결정론 지터"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
   {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},
