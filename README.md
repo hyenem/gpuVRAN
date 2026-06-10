@@ -2,7 +2,7 @@
 
 GPU 아키텍처와 CUDA를 기초부터 배워 **GPU 기반 vRAN(5G L1/PHY) 가속**까지 연결하는 개인 학습 사이트입니다.
 
-🔗 **사이트 보기:** (배포 후 여기에 GitHub Pages URL이 들어갑니다)
+🔗 **사이트 보기:** https://hyenem.github.io/gpuVRAN/
 
 ## 구성
 
