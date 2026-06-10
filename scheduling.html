@@ -131,6 +131,77 @@ warp D:                  [계산]          ← D도 → 계산기(ALU)가 안 �
       <div class="figcap">그림 — warp 스케줄러가 "준비된 warp"를 골라 돌려서, 메모리 대기 시간을 다른 warp의 계산으로 채운다 (그래서 occupancy가 중요)</div>
     </div>
 
+    <p>그럼 반장(warp 스케줄러)은 매 사이클 정확히 무엇을 할까요? <strong>4단계가 무한 반복</strong>됩니다:</p>
+
+    <div class="figure">
+      <svg viewBox="0 0 860 350" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="aw" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker>
+          <marker id="awg" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#76b900"/></marker>
+        </defs>
+        <style>
+          .st{fill:#161b22;stroke:#2d333b;stroke-width:1.4}
+          .ready{fill:#16210f;stroke:#76b900;stroke-width:1.3}
+          .stall{fill:#1c2230;stroke:#2d333b;stroke-width:1;stroke-dasharray:4 3}
+          .sel{fill:#0d1117;stroke:#c29bff;stroke-width:1.8}
+          .t{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:11px sans-serif;font-weight:700}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .v{fill:#c29bff;font:11px sans-serif;font-weight:700}
+          .ln{stroke:#6e7681;stroke-width:1.5;fill:none}
+          .loop{stroke:#76b900;stroke-width:1.8;fill:none}
+        </style>
+
+        <!-- ① 상태 확인 -->
+        <rect class="st" x="20" y="40" width="190" height="150" rx="10"/>
+        <text class="t" x="115" y="64" text-anchor="middle">① 상태 확인</text>
+        <text class="ts" x="115" y="80" text-anchor="middle">상주 warp 중 누가 ready?</text>
+        <rect class="ready" x="36" y="92"  width="158" height="20" rx="4"/><text class="ts" x="115" y="106" text-anchor="middle">W0: ready ✓</text>
+        <rect class="stall" x="36" y="116" width="158" height="20" rx="4"/><text class="ts" x="115" y="130" text-anchor="middle">W1: 메모리 대기 💤</text>
+        <rect class="ready" x="36" y="140" width="158" height="20" rx="4"/><text class="ts" x="115" y="154" text-anchor="middle">W2: ready ✓</text>
+        <rect class="stall" x="36" y="164" width="158" height="20" rx="4"/><text class="ts" x="115" y="178" text-anchor="middle">W3: 배리어 대기 💤</text>
+        <path class="ln" d="M210,115 L248,115" marker-end="url(#aw)"/>
+
+        <!-- ② 선택 -->
+        <rect class="st" x="250" y="60" width="170" height="110" rx="10"/>
+        <text class="t" x="335" y="86" text-anchor="middle">② 선택</text>
+        <text class="ts" x="335" y="104" text-anchor="middle">ready 중 하나를 고름</text>
+        <rect class="sel" x="270" y="116" width="130" height="26" rx="5"/>
+        <text class="v" x="335" y="133" text-anchor="middle">W2 선택!</text>
+        <text class="ts" x="335" y="158" text-anchor="middle">(정책: 교대/탐욕 등)</text>
+        <path class="ln" d="M420,115 L458,115" marker-end="url(#aw)"/>
+
+        <!-- ③ 발행 -->
+        <rect class="st" x="460" y="60" width="180" height="110" rx="10"/>
+        <text class="t" x="550" y="86" text-anchor="middle">③ 발행 (issue)</text>
+        <text class="ts" x="550" y="104" text-anchor="middle">W2의 다음 명령을</text>
+        <text class="ts" x="550" y="120" text-anchor="middle">실행 유닛으로 보냄</text>
+        <text class="d" x="550" y="146" text-anchor="middle">산술→ALU · 적재→LD/ST</text>
+        <text class="d" x="550" y="162" text-anchor="middle">sin/sqrt→SFU</text>
+        <path class="ln" d="M640,115 L678,115" marker-end="url(#aw)"/>
+
+        <!-- ④ 갱신 -->
+        <rect class="st" x="680" y="40" width="160" height="150" rx="10"/>
+        <text class="t" x="760" y="64" text-anchor="middle">④ 상태 갱신</text>
+        <text class="ts" x="760" y="88" text-anchor="middle">W2가 메모리 요청했다면</text>
+        <text class="ts" x="760" y="104" text-anchor="middle">→ 대기 💤로 표시</text>
+        <text class="ts" x="760" y="128" text-anchor="middle">W1의 데이터가 도착했다면</text>
+        <text class="ts" x="760" y="144" text-anchor="middle">→ ready ✓로 복귀</text>
+        <text class="d" x="760" y="172" text-anchor="middle">(scoreboard가 의존성 추적)</text>
+
+        <!-- 루프 -->
+        <path class="loop" d="M760,190 C760,260 115,260 115,196" marker-end="url(#awg)"/>
+        <text class="g" x="438" y="252" text-anchor="middle">⟲ 매 사이클 반복 — 이 한 바퀴가 1사이클, 전환 비용 0</text>
+
+        <!-- 하단 노트 -->
+        <text class="d" x="20" y="300">· "ready" = 다음 명령의 피연산자(데이터)가 모두 준비된 상태. 메모리·배리어·이전 명령 결과를 기다리면 대기.</text>
+        <text class="d" x="20" y="320">· 전환이 0-비용인 이유: 모든 warp의 레지스터가 SM에 동시 상주 → 저장/복원 없이 ②에서 고르기만 하면 됨.</text>
+        <text class="d" x="20" y="340">· SM엔 이 스케줄러가 4개 → 매 사이클 최대 4개 warp가 동시에 명령 발행.</text>
+      </svg>
+      <div class="figcap">그림 — warp 스케줄러의 매 사이클 4단계: 상태 확인 → ready 중 선택 → 명령 발행 → 상태 갱신, 그리고 무한 반복. 앞 타임라인의 "즉시 전환"이 바로 이 루프다</div>
+    </div>
+
     <div class="callout tip">
       <div class="title">💡 latency hiding (지연 숨기기)</div>
       <p>이게 GPU의 핵심 비법입니다. CPU는 큰 캐시로 메모리 지연을 <strong>줄이려</strong> 하지만, GPU는 <strong>대기 중인 다른 일꾼으로 그 시간을 메워(가려) 버립니다.</strong> 그러려면 당연히 SM에 <strong>대기 중인 warp가 충분히 많아야</strong> 하죠. 그래서 occupancy(일꾼 채움 정도)가 중요한 거예요. 바로 다음 절입니다.</p>
