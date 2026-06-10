@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심화 · PTP 동기 & 프론트홀 타이밍 — GPU vRAN 노트</title>
+<meta name="description" content="GPS/PTP 시간 동기(S-plane), eCPRI 전송 윈도우(T1a/Ta3/Ta4), 그리고 'CPU에서 시간 읽어 모듈에 뿌리던' 구조가 GPU vRAN에서 NIC 하드웨어 기준으로 바뀌는 과정을 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>심화 · 데이터 이동</h4>
+      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
+      <a href="interconnect.html#share" class="sub">메모리 공유 여부</a>
+      <a href="interconnect.html#nic" class="sub">NIC · GPUDirect</a>
+      <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
+      <a href="case-studies.html">실전 사례: 두 진영</a>
+      <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
+      <a href="ptp-timing.html#domains" class="sub">두 시계 도메인</a>
+      <a href="ptp-timing.html#ptp" class="sub">PTP · GPS 동기</a>
+      <a href="ptp-timing.html#window" class="sub">전송 윈도우</a>
+      <a href="ptp-timing.html#before-after" class="sub">시간 배포 구조 변화</a>
+      <a href="ptp-timing.html#slot" class="sub">GPU는 슬롯으로 일한다</a>
+      <a href="ptp-timing.html#checklist" class="sub">재설계 체크리스트</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / 심화 · 데이터 이동 / PTP & 타이밍</div>
+    <h1>PTP 동기 & 프론트홀 타이밍</h1>
+    <p class="lead">"GPS·PTP로 시간을 맞춰 CPU에서 읽고, 그걸 다른 모듈들에 뿌린다." — 이 구조가 GPU vRAN으로 가면 어떻게 바뀌는지가 이 페이지의 핵심입니다. 결론부터: <strong>시간의 진실원이 CPU 시스템 시계에서 NIC 하드웨어 시계(PHC)로 내려갑니다.</strong></p>
+
+    <h2 id="domains">1. 큰 그림 — 두 시계 도메인</h2>
+    <p>
+      vRAN 타이밍을 이해하는 멘탈 모델은 단 하나 — <strong>두 개의 시간축이 있고, 그 둘을 정렬하는 게 전부</strong>라는 것입니다.
+    </p>
+    <ul>
+      <li><strong>망 시간 (절대 시각)</strong> — GPS/PTP에 동기된 TAI. "지금 air interface가 몇 번 슬롯인가." NIC/DPU의 <strong>PHC(PTP Hardware Clock)</strong>가 관리.</li>
+      <li><strong>처리 시간 (상대)</strong> — GPU 파이프라인이 도는 시간. "이 연산이 마감 전에 끝나는가." 슬롯/심볼 <strong>인덱스</strong> 공간에서 동작.</li>
+    </ul>
+    <p>이 둘을 잇는 다리가 <strong>"PHC 절대시각 ↔ 슬롯 번호(SFN) 앵커링"</strong> 한 줄입니다. 이 페이지의 모든 내용이 결국 이 다리를 어떻게 놓느냐로 수렴합니다.</p>
+
+    <div class="callout">
+      <div class="title">📐 S-plane이란</div>
+      <p>O-RAN 프론트홀은 4개 평면으로 나뉩니다 — <strong>U</strong>(사용자 데이터), <strong>C</strong>(제어), <strong>S</strong>(동기/Sync), <strong>M</strong>(관리). 이 페이지의 1·2절은 <strong>S-plane</strong>(시간 동기)과 U/C-plane의 <strong>전송 타이밍</strong>을 다룹니다.</p>
+    </div>
+
+    <h2 id="ptp">2. PTP · GPS 시간 동기 (S-plane)</h2>
+    <table>
+      <thead><tr><th>주제</th><th>핵심</th></tr></thead>
+      <tbody>
+        <tr><td><strong>PTP 프로파일</strong></td><td>IEEE 1588v2 + ITU-T <strong>G.8275.1</strong> (Full Timing Support — 경로의 <em>모든</em> 노드에 Boundary Clock 필요). cf. G.8275.2(부분 지원)</td></tr>
+        <tr><td><strong>주파수 동기</strong></td><td><strong>SyncE</strong>로 주파수, PTP로 위상/시각 → <strong>하이브리드 모드</strong></td></tr>
+        <tr><td><strong>클럭 등급</strong></td><td>G.8273.2 <strong>Class C</strong> (T-BC, max|TE| = 30 ns) — 5G 프론트홀 목표치. T-GM / T-BC / T-TSC</td></tr>
+        <tr><td><strong>동기 토폴로지</strong></td><td><strong>LLS-C1~C4</strong> — DU↔RU 사이 동기 분배 4가지 모델</td></tr>
+        <tr><td><strong>타이밍 예산</strong></td><td>셀 위상 동기 <strong>±1.5 µs</strong>(GNSS 기준), 안테나 간 상대 <strong>TAE</strong>는 훨씬 빡빡(수십~수백 ns)</td></tr>
+      </tbody>
+    </table>
+    <div class="callout tip">
+      <div class="title">💡 PHC = 진짜 시계</div>
+      <p>리눅스에서 PTP는 <code>ptp4l</code>(PTP 동기)과 <code>phc2sys</code>(PHC↔시스템시계 정렬)로 돕니다. 여기서 핵심은 — <strong>NIC의 PHC가 GPS/PTP에 직접 규율되는 하드웨어 시계</strong>이고, CPU 시스템 시계(<code>CLOCK_REALTIME</code>)는 그 PHC를 <code>phc2sys</code>로 따라가는 <em>사본</em>이라는 점입니다. GPU vRAN에선 이 PHC가 시간의 중심이 됩니다.</p>
+    </div>
+
+    <h2 id="window">3. 패킷 타이밍 & 전송 윈도우 (U/C-plane)</h2>
+    <p>
+      프론트홀 패킷(<strong>eCPRI over Ethernet</strong>)은 정해진 <strong>시간 창</strong> 안에 도착/출발해야 하고, 어기면 RU가 버립니다. 이게 "타이밍 포함 패킷 송수신"의 실체입니다.
+    </p>
+    <table>
+      <thead><tr><th>윈도우</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td><strong>T1a</strong></td><td>DL C/U-plane을 공중(air) 슬롯 경계 <em>이전</em>에 보내야 하는 송신 윈도우</td></tr>
+        <tr><td><strong>Ta3 / Ta4</strong></td><td>UL 데이터 수신 윈도우 (RU→DU)</td></tr>
+      </tbody>
+    </table>
+    <h3>GPU vRAN에서 어려운 두 부분</h3>
+    <ul>
+      <li><strong>RX</strong>: NIC이 eCPRI 수신 → <a href="interconnect.html#nic">GPUDirect로 GPU에 직접 DMA</a> → 각 패킷이 <em>어느 슬롯/심볼</em>인지 알아야 함 → <strong>flow steering</strong>으로 U/C-plane 분류 + 재정렬.</li>
+      <li><strong>TX</strong>: GPU가 IQ 생성 → <em>정밀한 시각</em>에 송신해야 함(T1a). 소프트웨어로는 µs 정밀도 보장 불가 → <strong>NIC 하드웨어가 패킷을 페이싱</strong>.</li>
+    </ul>
+    <div class="callout">
+      <div class="title">🔧 NVIDIA의 답 — "5T for 5G"</div>
+      <p>ConnectX-6 Dx/7·BlueField에서 동작하는 타이밍 가속 묶음:</p>
+      <ul>
+        <li><strong>Accurate Send Scheduling</strong> — "슬롯 시작 타임스탬프 + 오프셋(예: 700 µs)"으로 하드웨어가 정확한 시각에 패킷 송출</li>
+        <li><strong>eCPRI Windowing</strong> — SW가 스케줄, HW가 윈도우 내 전송 가속</li>
+        <li><strong>eCPRI flow steering</strong> — 들어오는 패킷을 분류해 올바른 큐/GPU로</li>
+      </ul>
+      <p>예제 코드: <a href="https://github.com/NVIDIA/5t5g" target="_blank" rel="noopener">NVIDIA/5t5g (GitHub)</a> — DPDK 앱에서 슬롯 시각에 패킷을 정확히 쏘는 법을 보여줍니다.</p>
+    </div>
+
+    <h2 id="before-after">4. ★ 시간 배포 구조의 변화 (Before / After)</h2>
+    <p>
+      여기가 당신의 현재 구조와 직결되는 부분입니다. 지금은 <strong>CPU 시스템 시계가 단일 진실원</strong>이고, 응용이 그걸 읽어 소프트웨어로 각 모듈에 슬롯 타이밍을 뿌립니다.
+    </p>
+    <h3>Before — CPU 중심 SW 배포 (현재)</h3>
+    <pre><code>GPS(PPS+ToD) ──┐
+               ├─▶ [CPU 시스템 시계] ──(SW로 읽어서)──▶ 모듈 A, B, C…
+PTP grandmaster ┘      ↑ ptp4l/phc2sys              (슬롯 경계를 SW 브로드캐스트)</code></pre>
+    <p>4G·초기 vRAN에선 문제없습니다. 하지만 SW 경로는 스케줄링·인터럽트로 <strong>지터가 µs~ms</strong> — 제어용엔 충분해도 프론트홀 U-plane(수십~수백 µs 윈도우)엔 치명적입니다.</p>
+
+    <h3>After — NIC 하드웨어 앵커 (GPU vRAN)</h3>
+    <pre><code>GPS(PPS) ──┐
+           ├─▶ [NIC PHC = 새 진실원] ─┬─▶ (HW 타임스탬프) 수신 eCPRI에 시각 직접 기록 (RX)
+PTP ───────┘                          ├─▶ (Accurate Send Scheduling) 정확한 시각에 송출 (TX)
+                                      └─▶ phc2sys ─▶ CPU 시스템 시계 (제어·로그·OAM용 유지)</code></pre>
+    <table>
+      <thead><tr><th>항목</th><th>Before (CPU 중심)</th><th>After (GPU vRAN)</th></tr></thead>
+      <tbody>
+        <tr><td>PTP/GPS 규율</td><td>CPU에서 ptp4l/phc2sys</td><td><strong>동일</strong> (CPU 계속)</td></tr>
+        <tr><td>진실원 시계</td><td>CPU 시스템 시계</td><td><strong>NIC PHC</strong> (HW)</td></tr>
+        <tr><td>제어 모듈 시간 배포</td><td>SW로 읽어 뿌림</td><td><strong>그대로 OK</strong></td></tr>
+        <tr><td><strong>슬롯 타이밍 배포</strong></td><td>SW 브로드캐스트</td><td><strong>NIC HW 타임스탬프 + 슬롯 앵커링으로 대체</strong></td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <div class="title">⚠️ 당신의 케이스 (b) — 슬롯 타이밍 배포 모듈이 1순위 재설계 대상</div>
+      <p>
+        뿌리는 시간이 <strong>제어용 거친 시각</strong>이 아니라 <strong>무선 프레임 타이밍(슬롯 경계) 그 자체</strong>라면, 그 모듈은 <strong>그대로 옮길 수 없습니다.</strong> GPU vRAN에선 슬롯 경계를 SW로 브로드캐스트하지 않고 —
+      </p>
+      <ul>
+        <li>NIC PHC를 <strong>공통 시간 앵커</strong>로 두고,</li>
+        <li>각 소비자(GPU 파이프라인, 송신 스케줄러)가 <strong>하드웨어 타임스탬프 + PHC↔SFN 매핑</strong>에서 슬롯 타이밍을 직접 끌어오게</li>
+      </ul>
+      <p>바꿔야 합니다. 즉 "한 모듈이 시간을 계산해 뿌리는" 푸시(push) 구조에서, "공통 PHC를 기준으로 각자 끌어오는" 풀(pull) 구조로 바뀝니다.</p>
+    </div>
+
+    <h2 id="slot">5. 결정적 포인트 — GPU는 절대 시각을 안 본다</h2>
+    <p>
+      GPU는 PTP에 동기된 실시간 시계가 없고, 필요도 없습니다. 역할이 분리되기 때문입니다:
+    </p>
+    <ul>
+      <li><strong>GPU</strong> — 슬롯/심볼 <strong>인덱스</strong> 공간에서 작업. "슬롯 N의 IQ를 계산하라."</li>
+      <li><strong>NIC</strong> — 절대 시각 매핑 담당. "슬롯 N은 PHC 기준 몇 시에 송신/수신." (Accurate Send Scheduling)</li>
+    </ul>
+    <pre><code>  GPU 도메인 (인덱스)          ┃ 다리 ┃        NIC 도메인 (절대시각)
+ ─────────────────────────────╂──────╂──────────────────────────────
+  "슬롯 N 심볼 M 처리"   ◀────  PHC ↔ SFN 앵커링  ────▶  PHC 절대시각(TAI)
+  결정론: 윈도우 마감 준수      ┃      ┃        HW 타임스탬프 / Send Scheduling</code></pre>
+    <p>
+      그래서 당신이 지금 SW로 모듈마다 슬롯 시각을 뿌리던 일을, 데이터 평면에선 <strong>NIC 하드웨어가 패킷 단위로 대신</strong>합니다. GPU는 절대 시각을 몰라도 슬롯 인덱스만으로 정확히 동작합니다.
+    </p>
+
+    <h2 id="checklist">6. 재설계 체크리스트</h2>
+    <ol>
+      <li><strong>시간 진실원 재배치</strong> — CPU 시스템 시계 → NIC PHC 기준. <code>phc2sys</code>로 PHC↔시스템시계 정렬은 유지(제어용).</li>
+      <li><strong>슬롯 타이밍 배포 모듈 개조 (b 케이스)</strong> — SW 푸시 브로드캐스트 제거 → PHC 공통 앵커 + HW 타임스탬프 기반 풀 구조로.</li>
+      <li><strong>슬롯↔PHC 앵커링 로직</strong> — SFN/슬롯 경계가 PHC 절대시각 몇에 해당하는지 계산. T1a/Ta3/Ta4 윈도우가 여기서 파생.</li>
+      <li><strong>NIC/DPU 선택</strong> — HW PTP 타임스탬핑(PHC), Boundary Clock, Accurate Send Scheduling 지원 (ConnectX-7/BlueField-3).</li>
+      <li><strong>패킷 경로</strong> — DPDK + GPUDirect, flow steering로 U/C/S 분류.</li>
+      <li><strong>결정론</strong> — GPU 파이프라인이 윈도우 마감 안에 끝나는지(tail latency), CUDA Graphs/persistent kernel.</li>
+      <li><strong>제어 평면 유지</strong> — OAM·로그·스케줄 결정용 SW 시간 배포는 그대로.</li>
+      <li><strong>측정·검증</strong> — TAE 측정, PTP 정확도(±ns), 윈도우 위반(late/early packet) 모니터링 (Calnex, VIAVI).</li>
+      <li><strong>시스템 튜닝</strong> — core isolation, NUMA(NIC·GPU 같은 노드), IRQ affinity, RT 커널.</li>
+    </ol>
+
+    <div class="callout tip">
+      <div class="title">✅ 이 페이지 정리</div>
+      <p>
+        ① vRAN 타이밍 = <strong>망 시간(NIC PHC) ↔ 처리 시간(GPU 슬롯 인덱스)</strong> 두 도메인 정렬. ② PTP는 CPU(ptp4l/phc2sys)가 계속 돌리되 <strong>진실원은 NIC PHC</strong>. ③ "CPU에서 읽어 SW로 슬롯 타이밍 뿌리던" 구조는 <strong>NIC HW 타임스탬프 + Accurate Send Scheduling</strong>으로 대체 — 당신의 (b) 모듈이 1순위 개조 대상. ④ GPU는 절대 시각을 모르고 슬롯 인덱스로 일한다. 출발점은 <a href="https://github.com/NVIDIA/5t5g" target="_blank" rel="noopener">NVIDIA/5t5g</a>.
+      </p>
+    </div>
+
+    <h2 id="sources">참고 자료</h2>
+    <ul>
+      <li><a href="https://www.nxgconnect.com/post/timing-synchronization-in-o-ran" target="_blank" rel="noopener">Timing & Synchronization in O-RAN (nxgconnect)</a></li>
+      <li><a href="https://mohit991.medium.com/precision-time-protocol-ptp-in-o-ran-g-8275-1-g-8275-2-14b6b19b011" target="_blank" rel="noopener">PTP in O-RAN, G.8275.1 & G.8275.2</a></li>
+      <li><a href="https://developer.nvidia.com/blog/transforming-next-gen-wireless-with-5t-for-5g-and-aerial-sdk/" target="_blank" rel="noopener">NVIDIA — 5T for 5G and the Aerial SDK</a></li>
+      <li><a href="https://github.com/NVIDIA/5t5g" target="_blank" rel="noopener">NVIDIA/5t5g — Accurate Send Scheduling, eCPRI flow steering (GitHub)</a></li>
+      <li><a href="https://docs.nvidia.com/aerial/framework/latest/tutorials/generated/fronthaul_tutorial.html" target="_blank" rel="noopener">Aerial Framework — Fronthaul Uplink Processing</a></li>
+      <li><a href="https://cdn.atis.org/wsts.atis.org/2024/05/03190654/05_ORAN-Synchronization-Considerations_Armstrong_FINAL.pdf" target="_blank" rel="noopener">ATIS — O-RAN Synchronization Considerations (2024)</a></li>
+    </ul>
+
+    <div class="pager">
+      <a href="case-studies.html"><div class="dir">← 이전</div><div class="ttl">실전 사례: 두 진영</div></a>
+      <a class="next" href="vran.html"><div class="dir">관련 →</div><div class="ttl">Part 3 · GPU vRAN 가속</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
