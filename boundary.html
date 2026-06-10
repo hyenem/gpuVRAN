@@ -41,6 +41,7 @@
       <a href="boundary.html#buffer" class="sub">mbuf는 언제 free하나</a>
       <a href="boundary.html#completion" class="sub">완료 기반 free</a>
       <a href="boundary.html#partition" class="sub">CPU-GPU 작업 분할</a>
+      <a href="boundary.html#cu-plane" class="sub">C/U-plane 분류</a>
       <a href="boundary.html#hidden" class="sub">분할 축 · 숨은 비용</a>
     </nav>
     <nav class="nav-group">
@@ -147,6 +148,47 @@
         <tr><td><strong>부하 적응형</strong></td><td>저부하 슬롯 → CPU, 고부하 → GPU</td></tr>
       </tbody>
     </table>
+
+    <h3 id="cu-plane">C/U-plane 분류 — 가장 자연스러운 분할</h3>
+    <p>
+      위 표의 <strong>"평면별"</strong> 축을 자세히 봅니다. 이게 <a href="#partition">packet 사이즈 분할</a>과 달리 <strong>구조에 안 거슬리는 좋은 축</strong>인 이유 — C-plane과 U-plane은 <em>애초에 다른 데이터</em>라서입니다.
+    </p>
+    <table>
+      <thead><tr><th>평면</th><th>정체</th><th>성격 → 어디로</th></tr></thead>
+      <tbody>
+        <tr><td><strong>C-plane</strong> (제어)</td><td>"이 슬롯에 어느 PRB·어떤 빔·어떤 압축으로 처리하라"는 스케줄/섹션 정보</td><td>작고·분기 많고·제어 로직 → <strong>CPU</strong></td></tr>
+        <tr><td><strong>U-plane</strong> (사용자)</td><td>실제 <strong>IQ 샘플</strong> (대용량)</td><td>크고·규칙적·병렬 → <strong>GPU</strong></td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <div class="title">📐 용어 주의</div>
+      <p>프론트홀엔 4평면(<strong>C/U/S/M</strong>)이 있고, 여기 C/U는 <a href="ptp-timing.html#window">프론트홀 평면</a>입니다. 상위의 <strong>CU-CP / CU-UP 분리</strong>(5G에서 CU를 제어/사용자 노드로 나눔)와는 다른 레벨이에요. 우리 맥락(DU/L1)에선 프론트홀 C/U-plane을 말합니다.</p>
+    </div>
+
+    <h4 style="margin:24px 0 8px;font-size:1rem;">핵심 — C-plane이 U-plane을 <em>어떻게</em> 처리할지 알려준다</h4>
+    <pre><code>C-plane 먼저 도착 → 파싱(CPU): "슬롯 N, 심볼 M, PRB 0~50, 빔 ID 3, BFP 압축"
+                              ↓ 이 정보로 U-plane 처리를 구성(configure)
+U-plane 도착 → GPUDirect로 GPU → C-plane이 지정한 대로 FFT·채널추정·MIMO·LDPC</code></pre>
+    <ul>
+      <li><strong>C-plane</strong>: 작은 제어 메시지, 분기·룩업 많음, U-plane보다 <strong>먼저</strong>(T1a 윈도우) 도착 → CPU가 파싱해 처리 파라미터 셋업</li>
+      <li><strong>U-plane</strong>: 대량 IQ, 단순·병렬 → GPU가 C-plane이 정해준 설정대로 대량 처리</li>
+    </ul>
+
+    <h4 style="margin:24px 0 8px;font-size:1rem;">어떻게 분류하나 — NIC flow steering</h4>
+    <ul>
+      <li>NIC이 <strong>eCPRI 메시지 타입 / eAxC ID</strong>로 C-plane·U-plane을 <strong>다른 큐</strong>로 분류 (하드웨어 flow steering)</li>
+      <li>C-plane 큐 → CPU 파싱 / U-plane 큐 → <a href="interconnect.html#nic">GPUDirect로 GPU 직접 적재</a></li>
+    </ul>
+
+    <div class="callout tip">
+      <div class="title">✅ 왜 "좋은" 분할인가</div>
+      <ul>
+        <li><strong>의미(semantic)가 다른 데이터</strong> — 제어 vs 데이터, 처리 파이프라인 자체가 다름</li>
+        <li><strong>병합 문제 없음</strong> — 합치는 게 아니라 C가 U를 <em>구성</em>하는 관계</li>
+        <li><strong>각 칩 강점에 정확히 매칭</strong> — 분기 제어는 CPU, 대량 병렬은 GPU</li>
+      </ul>
+      <p>그래서 <a href="vran.html#aerial">NVIDIA Aerial</a> 같은 inline 구조도 "다 GPU"가 아니라 — <strong>C-plane 파싱·MAC 스케줄링은 CPU(또는 cuMAC), U-plane 신호처리는 GPU</strong>라는 평면 분리가 기본으로 깔려 있습니다.</p>
+    </div>
 
     <h3>숨은 비용 — 이게 결정적</h3>
     <ol>

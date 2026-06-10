@@ -48,6 +48,7 @@
   {"title":"mbuf는 언제 free하나","section":"경계 설계","url":"boundary.html#buffer","text":"mbuf free dpdk refcnt 참조 카운트 완료 cuda event 완료 기반 gpudirect mempool 고갈 use-after-free gpudev gpunetio external buffer"},
   {"title":"완료 기반 free","section":"경계 설계","url":"boundary.html#completion","text":"완료 completion cuda event cudalaunchhostfunc 세마포어 호스트 프록시 시간 기반 위험 트리거"},
   {"title":"CPU-GPU 작업 분할","section":"경계 설계","url":"boundary.html#partition","text":"cpu gpu 분할 partition packet size 크로스오버 저부하 prb inline lookaside 결합"},
+  {"title":"C/U-plane 분류 (CP/UP)","section":"경계 설계","url":"boundary.html#cu-plane","text":"cp up c-plane u-plane control user plane 분류 cpu gpu flow steering eaxc ecpri cu-cp cu-up cumac 평면별 분할"},
   {"title":"분할 축과 숨은 비용","section":"경계 설계","url":"boundary.html#hidden","text":"분할 축 기능 셀 캐리어 평면 부하 적응 데이터 지역성 병합 동기 오버헤드 결정론 지터"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
