@@ -131,6 +131,62 @@ GPU
       <p>SM은 동시에 여러 warp를 올려놓고, 한 warp가 메모리를 기다리며 멈추면 즉시 다른 warp로 전환해 ALU를 놀리지 않습니다(latency hiding). 그래서 SM에 충분히 많은 warp를 올리는 것 — <strong>높은 occupancy</strong> — 가 GPU 성능의 열쇠입니다.</p>
     </div>
 
+    <h3 id="sm-deep">SM 심화 — 안을 들여다보기</h3>
+    <p>SM은 GPU 성능과 스케줄링의 심장이라 한 단계 더 파봅니다. SM 하나가 "작은 독립 프로세서"이고, GPU는 이것의 배열입니다.</p>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem;">① SM 안에는 무엇이 (예: Ampere/Hopper, 아키텍처마다 다름)</h4>
+    <table>
+      <thead><tr><th>구성요소</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td><strong>CUDA 코어</strong> (~128 FP32/SM)</td><td>일반 산술 (덧셈·곱셈)</td></tr>
+        <tr><td><strong>Tensor 코어</strong> (~4/SM)</td><td>행렬 곱-누적(MMA), 딥러닝·빔포밍</td></tr>
+        <tr><td><strong>Warp 스케줄러</strong> (보통 4개/SM)</td><td>매 사이클 실행할 warp 선택</td></tr>
+        <tr><td><strong>레지스터 파일</strong> (65,536 × 32bit ≈ 256KB/SM)</td><td>스레드 지역 변수</td></tr>
+        <tr><td><strong>Shared memory / L1</strong> (~최대 228KB/SM)</td><td>블록 내 협력·캐싱</td></tr>
+        <tr><td><strong>LD/ST, SFU</strong></td><td>메모리 접근, 특수함수(sin/sqrt)</td></tr>
+      </tbody>
+    </table>
+    <p>핵심 — SM은 <strong>레지스터·shared memory·warp 슬롯을 "고정 예산"으로</strong> 가진 단위입니다. 이 예산이 occupancy의 전부예요.</p>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem;">② 일이 SM에 올라가는 규칙</h4>
+    <ul>
+      <li><strong>블록은 한 SM에만</strong> 배정됨 (SM 사이로 안 쪼개짐). 그래서 블록 내 스레드끼리만 shared memory·<code>__syncthreads()</code> 가능.</li>
+      <li><strong>SM 하나는 여러 블록을 동시 거주(resident)</strong>시킴 — 자원이 허락하는 만큼. 블록들의 warp가 섞여 스케줄됨.</li>
+    </ul>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem;">③ Occupancy — 몇 warp가 거주하나 (자원 한계)</h4>
+    <table>
+      <thead><tr><th>한계</th><th>예 (Ampere)</th></tr></thead>
+      <tbody>
+        <tr><td>최대 warp/SM</td><td>64 warp (= 2048 스레드)</td></tr>
+        <tr><td>최대 블록/SM</td><td>~32 블록</td></tr>
+        <tr><td>레지스터/SM</td><td>65,536개 → 스레드가 많이 쓰면 warp 수↓</td></tr>
+        <tr><td>shared memory/SM</td><td>~164KB → 블록이 많이 쓰면 블록 수↓</td></tr>
+      </tbody>
+    </table>
+    <p><strong>예</strong> — 커널이 스레드당 레지스터 64개 쓰면: 2048 × 64 = 131,072 &gt; 65,536 → 절반(32 warp)만 거주 → <strong>occupancy 50%</strong>. 레지스터를 줄이면 더 많은 warp가 올라갑니다.</p>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem;">④ Warp 스케줄링 — 왜 occupancy가 중요한가</h4>
+    <pre><code>warp A: 메모리 대기 ──┐
+warp B: 실행          │  A가 멈춘 동안 B·C·D 실행 → ALU 안 놀림
+warp C: 실행          │  (= latency hiding, 0-오버헤드 전환)
+warp D: 실행 ─────────┘</code></pre>
+    <p>한 warp가 global memory를 기다리며 멈추면 스케줄러가 <strong>즉시 다른 ready warp로 전환</strong>합니다. 그래서 SM에 warp가 충분히 많아야(높은 occupancy) 지연을 가리고 ALU를 꽉 채웁니다. CPU는 캐시로 지연을 줄이고, <strong>GPU는 많은 warp로 지연을 가립니다.</strong></p>
+
+    <h4 style="margin:22px 0 8px;font-size:1rem;">⑤ 선점이 약하다 — <a href="tx-scheduling.html#preemption">TX 스케줄링</a>과의 연결</h4>
+    <p>
+      <strong>블록은 SM 자원을 차지한 채 끝까지 실행(run-to-completion)</strong>합니다. 거대한 커널의 블록들이 모든 SM을 점유하면, 급한 커널 블록은 <strong>SM 자원이 빌 때까지 대기</strong>해요. GPU는 CPU처럼 실행 중인 블록을 쉽게 쫓아내지(선점) 못합니다(Pascal+ 부분 선점은 거칠고 비쌈). 이게 "큰 커널이 SM 점유 → 급한 일 밀림"(head-of-line blocking)의 근본 원인입니다.
+    </p>
+    <table>
+      <thead><tr><th>대응</th><th>SM 차원의 이유</th></tr></thead>
+      <tbody>
+        <tr><td>커널을 작게</td><td>블록이 빨리 끝나 SM 자원이 자주 풀림</td></tr>
+        <tr><td>스트림 우선순위</td><td>자원이 비면 우선순위 높은 블록부터 배정</td></tr>
+        <tr><td>MIG / MPS</td><td>SM을 물리적으로 분할 → 자원 뺏김 방지</td></tr>
+        <tr><td>occupancy 관리</td><td>레지스터/shared 적게 → 더 많은 warp 거주</td></tr>
+      </tbody>
+    </table>
+
     <h2 id="memory">1.3 메모리 계층 — GPU 성능의 진짜 병목</h2>
     <p>
       많은 GPU 프로그램이 연산이 아니라 <strong>메모리 접근</strong>에서 막힙니다(memory-bound). 메모리 종류와 속도를 아는 것이 최적화의 절반입니다.

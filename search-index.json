@@ -4,6 +4,7 @@
 
   {"title":"CPU vs GPU","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#cpu-vs-gpu","text":"cpu gpu 차이 latency throughput 처리량 코어 alu 설계 철학 simd"},
   {"title":"SIMT · Warp · SM","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#simt","text":"simt warp 32 스레드 sm streaming multiprocessor occupancy divergence 분기 발산 스케줄러"},
+  {"title":"SM 심화 (구성·occupancy·선점)","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#sm-deep","text":"sm 심화 구성 cuda 코어 tensor 레지스터 파일 shared memory warp 스케줄러 occupancy 거주 resident 블록 latency hiding 선점 preemption run-to-completion head-of-line mig mps"},
   {"title":"메모리 계층","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#memory","text":"메모리 계층 레지스터 shared memory global l1 l2 캐시 coalescing 병합 bank conflict 대역폭"},
   {"title":"최신 GPU 아키텍처","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#arch","text":"volta ampere hopper ada lovelace grace hopper h100 a100 tensor core gh200 데이터센터"},
 
