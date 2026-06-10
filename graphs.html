@@ -280,6 +280,72 @@ b&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 그래�
       원래 그래프 실행은 CPU가 시켰는데, 이제 <strong>GPU 커널이 직접 다른 그래프를 실행</strong>할 수 있습니다. GPU가 "다음엔 어떤 그래프를 돌릴지" 스스로 정해서, <strong>CPU에 묻는 왕복을 없애</strong>는 거죠. 복잡한 단계적 처리를 GPU 안에서 끝낼 수 있습니다.
     </p>
 
+    <div class="figure">
+      <svg viewBox="0 0 860 360" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ad" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker>
+          <marker id="ado" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#f0883e"/></marker>
+          <marker id="adg" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#76b900"/></marker>
+        </defs>
+        <style>
+          .cpu{fill:#1a1430;stroke:#a371f7;stroke-width:1.6}
+          .gA{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .gB{fill:#14233a;stroke:#58a6ff;stroke-width:1.4}
+          .dec{fill:#0d1117;stroke:#c29bff;stroke-width:1.6}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:11px sans-serif;font-weight:700}
+          .b{fill:#58a6ff;font:11px sans-serif}
+          .o{fill:#f0883e;font:11px sans-serif;font-weight:700}
+          .v{fill:#c29bff;font:11px sans-serif;font-weight:700}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .ln{stroke:#6e7681;stroke-width:1.4;fill:none}
+          .lno{stroke:#f0883e;stroke-width:1.5;fill:none}
+          .lng{stroke:#76b900;stroke-width:1.6;fill:none}
+          .bound{stroke:#2d333b;stroke-width:1;stroke-dasharray:6 5}
+        </style>
+
+        <!-- 기존 방식 -->
+        <text class="t" x="20" y="22" font-weight="700">기존 — CPU가 매번 결정·launch (왕복 비용)</text>
+        <text class="ts" x="20" y="46">CPU</text>
+        <line class="bound" x1="20" y1="78" x2="840" y2="78"/>
+        <text class="ts" x="20" y="98">GPU</text>
+        <rect class="cpu" x="60"  y="34" width="120" height="32" rx="6"/><text class="v" x="120" y="54" text-anchor="middle">launch A</text>
+        <rect class="cpu" x="330" y="34" width="170" height="32" rx="6"/><text class="v" x="415" y="54" text-anchor="middle">결과 보고 다음 결정</text>
+        <rect class="cpu" x="590" y="34" width="120" height="32" rx="6"/><text class="v" x="650" y="54" text-anchor="middle">launch B</text>
+        <rect class="gA" x="130" y="96" width="150" height="34" rx="6"/><text class="g" x="205" y="117" text-anchor="middle">그래프 A 실행</text>
+        <rect class="gB" x="660" y="96" width="150" height="34" rx="6"/><text class="b" x="735" y="117" text-anchor="middle">그래프 B 실행</text>
+        <path class="lno" d="M130,66 L165,94" marker-end="url(#ado)"/>
+        <path class="lno" d="M280,108 L350,68" marker-end="url(#ado)"/>
+        <path class="lno" d="M650,66 L690,94" marker-end="url(#ado)"/>
+        <text class="o" x="290" y="92">↑ 경계 넘기 (µs)</text>
+        <text class="o" x="510" y="92">경계 넘기 (µs) ↓</text>
+        <text class="o" x="20" y="152">그래프 사이마다 CPU↔GPU 왕복 → 지연 + CPU 점유</text>
+
+        <line x1="20" y1="172" x2="840" y2="172" stroke="#2d333b" stroke-width="1"/>
+
+        <!-- device launch -->
+        <text class="t" x="20" y="198" font-weight="700">Device Graph Launch — GPU가 스스로 다음 그래프를</text>
+        <text class="ts" x="20" y="222">CPU</text>
+        <line class="bound" x1="20" y1="252" x2="840" y2="252"/>
+        <text class="ts" x="20" y="272">GPU</text>
+        <rect class="cpu" x="60" y="210" width="140" height="32" rx="6"/><text class="v" x="130" y="230" text-anchor="middle">launch (1번만)</text>
+        <path class="ln" d="M130,242 L160,268" marker-end="url(#ad)"/>
+        <rect class="gA" x="140" y="270" width="150" height="34" rx="6"/><text class="g" x="215" y="291" text-anchor="middle">그래프 A 실행</text>
+        <path class="lng" d="M290,287 L330,287" marker-end="url(#adg)"/>
+        <rect class="dec" x="332" y="268" width="180" height="38" rx="8"/>
+        <text class="v" x="422" y="285" text-anchor="middle">커널이 결과 보고</text>
+        <text class="ts" x="422" y="299" text-anchor="middle">다음 그래프 선택 (GPU 안)</text>
+        <path class="lng" d="M512,280 L560,266" marker-end="url(#adg)"/>
+        <path class="lng" d="M512,296 L560,312" marker-end="url(#adg)"/>
+        <rect class="gB" x="562" y="248" width="150" height="32" rx="6"/><text class="b" x="637" y="268" text-anchor="middle">그래프 B</text>
+        <rect class="gB" x="562" y="300" width="150" height="32" rx="6"/><text class="b" x="637" y="320" text-anchor="middle">그래프 C</text>
+        <text class="g" x="726" y="290">← CPU 왕복 0번!</text>
+        <text class="d" x="20" y="350">CPU는 처음 한 번만 시동을 걸고, 이후 단계적 실행·분기는 전부 GPU 안에서 — 경계 넘는 µs 비용이 사라짐</text>
+      </svg>
+      <div class="figcap">그림 — 기존엔 그래프 사이마다 CPU↔GPU 경계를 왕복(위)했지만, device launch는 GPU 커널이 직접 다음 그래프(B 또는 C)를 골라 실행한다(아래)</div>
+    </div>
+
     <div class="callout warn">
       <div class="title">⚠️ 흔한 함정</div>
       <ul>
