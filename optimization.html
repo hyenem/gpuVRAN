@@ -175,6 +175,76 @@ C[i * stride] = A[i * stride];</code></pre>
 }</code></pre>
     <p>각 원소를 매번 창고에서 읽는 대신, 16×16 타일을 작업대에 한 번 올려 <strong>16번 재사용</strong>합니다. 창고 접근이 수십 배 줄어 성능이 크게 올라가요. (<code>__syncthreads()</code>가 왜 필요한지는 <a href="programming.html#sync">②장</a>을 떠올리세요 — "다 채운 뒤에 쓰자"를 보장.)</p>
 
+    <div class="figure">
+      <svg viewBox="0 0 860 380" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="at" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker>
+          <marker id="atg" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#76b900"/></marker>
+        </defs>
+        <style>
+          .mat{fill:#11161d;stroke:#2d333b;stroke-width:1.2}
+          .tileA{fill:#14233a;stroke:#58a6ff;stroke-width:1.6}
+          .tileB{fill:#2a1a12;stroke:#f0883e;stroke-width:1.6}
+          .band{fill:#161b22;stroke:#2d333b;stroke-width:1;stroke-dasharray:3 3}
+          .shm{fill:#0d1117;stroke:#76b900;stroke-width:1.8}
+          .t{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .b{fill:#58a6ff;font:11px sans-serif;font-weight:700}
+          .o{fill:#f0883e;font:11px sans-serif;font-weight:700}
+          .g{fill:#76b900;font:11px sans-serif;font-weight:700}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .ln{stroke:#6e7681;stroke-width:1.4;fill:none}
+          .lng{stroke:#76b900;stroke-width:1.5;fill:none}
+          .loop{stroke:#9da7b3;stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+        </style>
+
+        <text class="d" x="20" y="22">global memory (느린 창고)</text>
+
+        <!-- 행렬 A -->
+        <text class="b" x="80" y="52">행렬 A</text>
+        <rect class="mat" x="20" y="60" width="160" height="160" rx="6"/>
+        <rect class="band" x="20" y="92" width="160" height="32"/>
+        <rect class="tileA" x="52" y="92" width="32" height="32"/>
+        <text class="ts" x="100" y="240" text-anchor="middle">한 행 띠를 타일씩 순회 →</text>
+
+        <!-- 행렬 B -->
+        <text class="o" x="270" y="52">행렬 B</text>
+        <rect class="mat" x="210" y="60" width="160" height="160" rx="6"/>
+        <rect class="band" x="242" y="60" width="32" height="160"/>
+        <rect class="tileB" x="242" y="92" width="32" height="32"/>
+        <text class="ts" x="290" y="240" text-anchor="middle">한 열 띠를 타일씩 순회 ↓</text>
+
+        <!-- 적재 화살표 -->
+        <path class="ln" d="M86,108 C140,150 360,160 432,166" marker-end="url(#at)"/>
+        <path class="ln" d="M276,108 C330,140 400,160 436,172" marker-end="url(#at)"/>
+        <text class="d" x="350" y="120">① 타일 적재 (global→shared, 1회)</text>
+
+        <!-- shared memory -->
+        <rect class="shm" x="430" y="150" width="206" height="120" rx="10"/>
+        <text class="g" x="533" y="174" text-anchor="middle">shared memory (작업대)</text>
+        <rect class="tileA" x="450" y="186" width="64" height="64"/>
+        <text class="b" x="482" y="222" text-anchor="middle">tA 16×16</text>
+        <rect class="tileB" x="552" y="186" width="64" height="64"/>
+        <text class="o" x="584" y="222" text-anchor="middle">tB 16×16</text>
+
+        <!-- 재사용 -->
+        <path class="lng" d="M636,210 L692,210" marker-end="url(#atg)"/>
+        <rect x="694" y="178" width="146" height="64" rx="8" fill="#16210f" stroke="#76b900"/>
+        <text class="g" x="767" y="204" text-anchor="middle">② 16번 재사용</text>
+        <text class="ts" x="767" y="222" text-anchor="middle">블록의 256 스레드가</text>
+        <text class="ts" x="767" y="234" text-anchor="middle">부분합 누적 (빠름!)</text>
+
+        <!-- 다음 타일 루프 -->
+        <path class="loop" d="M533,272 C533,310 120,310 100,226" marker-end="url(#at)"/>
+        <text class="d" x="330" y="300" text-anchor="middle">③ __syncthreads() 후 다음 타일로 (t = t+1) — 띠 끝까지 반복</text>
+
+        <!-- 효과 비교 -->
+        <text class="d" x="20" y="346">타일링 없음: 원소 하나당 global 읽기 N번  →  타일링: 타일당 1번 적재 후 16번 재사용 = <tspan class="g">global 접근 1/16</tspan></text>
+        <text class="ts" x="20" y="366">색: 파랑 = A의 타일(tA), 주황 = B의 타일(tB), 점선 띠 = 이 블록이 결과 한 칸을 만들기 위해 훑는 영역</text>
+      </svg>
+      <div class="figcap">그림 — A의 행 띠와 B의 열 띠에서 16×16 타일을 하나씩 작업대(shared)로 가져와(①) 16번 우려먹고(②), 동기화 후 다음 타일로(③). global 접근이 1/16로 준다</div>
+    </div>
+
     <h2 id="bank">6.3 Bank Conflict — 작업대의 숨은 함정</h2>
     <p>
       공용 작업대(shared memory)에도 함정이 하나 있습니다. shared memory는 내부적으로 <strong>32개의 "뱅크(bank)"</strong>로 나뉘어 있어요 — 32개의 출납 창구라고 생각하세요. 한 warp의 여러 스레드가 <strong>같은 창구(뱅크)의 서로 다른 물건</strong>을 동시에 달라고 하면, 창구가 하나뿐이라 <strong>줄을 서야</strong> 합니다(직렬화 → 느려짐). 이게 <strong>bank conflict</strong>예요.
