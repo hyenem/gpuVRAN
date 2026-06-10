@@ -206,6 +206,75 @@ b&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 그래�
       <li>커널 안에서 <code>cudaGraphSetConditional</code>로 조건 값을 정함</li>
       <li><strong>IF</strong>: 조건이 참이면 안의 작업을 1번 / <strong>WHILE</strong>: 참인 동안 반복 (예: "수렴할 때까지 반복하는 계산"에 딱)</li>
     </ul>
+    <div class="figure">
+      <svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ac" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker>
+          <marker id="acg" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#76b900"/></marker>
+          <marker id="aco" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#f0883e"/></marker>
+        </defs>
+        <style>
+          .node{fill:#1c2230;stroke:#58a6ff;stroke-width:1.4}
+          .cond{fill:#0d1117;stroke:#c29bff;stroke-width:1.8;stroke-dasharray:7 4}
+          .body{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .b{fill:#58a6ff;font:11px sans-serif}
+          .g{fill:#76b900;font:11px sans-serif;font-weight:700}
+          .o{fill:#f0883e;font:11px sans-serif;font-weight:700}
+          .v{fill:#c29bff;font:11px sans-serif;font-weight:700}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .ln{stroke:#6e7681;stroke-width:1.4;fill:none}
+          .lng{stroke:#76b900;stroke-width:1.4;fill:none}
+          .lno{stroke:#f0883e;stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+          .loop{stroke:#76b900;stroke-width:1.6;fill:none}
+        </style>
+
+        <!-- IF -->
+        <text class="t" x="20" y="24" font-weight="700">IF 노드 — 조건이 참이면 body를 1회</text>
+        <rect class="node" x="80" y="40" width="200" height="38" rx="7"/>
+        <text class="b" x="180" y="58" text-anchor="middle">앞 커널</text>
+        <text class="ts" x="180" y="72" text-anchor="middle">cudaGraphSetConditional(h, 값)</text>
+        <path class="ln" d="M180,78 L180,104" marker-end="url(#ac)"/>
+        <!-- conditional container -->
+        <rect class="cond" x="60" y="106" width="240" height="120" rx="10"/>
+        <text class="v" x="180" y="126" text-anchor="middle">conditional 노드 (IF)</text>
+        <rect class="body" x="92" y="140" width="176" height="40" rx="6"/>
+        <text class="g" x="180" y="164" text-anchor="middle">body graph</text>
+        <text class="ts" x="180" y="200" text-anchor="middle">조건 ≠ 0 → 실행 / 0 → 통째로 건너뜀</text>
+        <!-- 분기 표시 -->
+        <path class="lng" d="M180,226 L180,258" marker-end="url(#acg)"/>
+        <text class="g" x="120" y="248" text-anchor="end">참: 실행 후</text>
+        <path class="lno" d="M300,166 C350,166 350,262 220,266" marker-end="url(#aco)"/>
+        <text class="o" x="356" y="160">거짓: 건너뜀</text>
+        <rect class="node" x="80" y="260" width="200" height="36" rx="7"/>
+        <text class="b" x="180" y="282" text-anchor="middle">다음 노드</text>
+
+        <!-- 구분선 -->
+        <line x1="440" y1="10" x2="440" y2="330" stroke="#2d333b" stroke-width="1"/>
+
+        <!-- WHILE -->
+        <text class="t" x="460" y="24" font-weight="700">WHILE 노드 — 조건이 참인 동안 body 반복</text>
+        <rect class="node" x="520" y="40" width="200" height="38" rx="7"/>
+        <text class="b" x="620" y="58" text-anchor="middle">앞 커널 (초기 조건 설정)</text>
+        <path class="ln" d="M620,78 L620,104" marker-end="url(#ac)"/>
+        <rect class="cond" x="500" y="106" width="240" height="140" rx="10"/>
+        <text class="v" x="620" y="126" text-anchor="middle">conditional 노드 (WHILE)</text>
+        <rect class="body" x="532" y="140" width="176" height="40" rx="6"/>
+        <text class="g" x="620" y="158" text-anchor="middle">body graph</text>
+        <text class="ts" x="620" y="172" text-anchor="middle">(body 안 커널이 조건을 갱신)</text>
+        <!-- 루프 화살표 -->
+        <path class="loop" d="M708,160 C770,160 770,212 708,212 L620,212 C580,212 570,190 588,182" marker-end="url(#acg)"/>
+        <text class="g" x="752" y="192">조건 참 → 다시</text>
+        <text class="ts" x="620" y="236" text-anchor="middle">조건이 0이 되면 루프 탈출</text>
+        <path class="ln" d="M620,246 L620,272" marker-end="url(#ac)"/>
+        <rect class="node" x="520" y="274" width="200" height="36" rx="7"/>
+        <text class="b" x="620" y="296" text-anchor="middle">다음 노드</text>
+        <text class="d" x="460" y="330">예: "수렴할 때까지 반복" 같은 가변 반복 알고리즘 — CPU 개입 없이 GPU 안에서 루프</text>
+      </svg>
+      <div class="figcap">그림 — conditional 노드(보라 점선 상자): 커널이 정한 조건 값에 따라 IF는 body를 1회 실행/건너뛰고, WHILE은 조건이 0이 될 때까지 body를 반복한다</div>
+    </div>
+
     <h3>Device Graph Launch (CUDA 12+) — GPU가 직접 그래프 실행</h3>
     <p>
       원래 그래프 실행은 CPU가 시켰는데, 이제 <strong>GPU 커널이 직접 다른 그래프를 실행</strong>할 수 있습니다. GPU가 "다음엔 어떤 그래프를 돌릴지" 스스로 정해서, <strong>CPU에 묻는 왕복을 없애</strong>는 거죠. 복잡한 단계적 처리를 GPU 안에서 끝낼 수 있습니다.
