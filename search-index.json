@@ -56,6 +56,10 @@
   {"title":"flow steering 큐 분류","section":"eAxC ID 매핑","url":"eaxc.html#steering","text":"flow steering rte_flow 큐 분류 eaxc nic gpudirect 디멀티플렉스 rss"},
   {"title":"GPU 버퍼 레이아웃 매핑","section":"eAxC ID 매핑","url":"eaxc.html#buffer","text":"gpu 버퍼 레이아웃 eaxc slot symbol prb offset 인덱스 채널추정 mimo coalescing"},
   {"title":"massive MIMO와 Category A/B","section":"eAxC ID 매핑","url":"eaxc.html#mimo","text":"massive mimo 안테나 레이어 category a b 빔포밍 precoding ru du eaxc 개수 대역폭"},
+  {"title":"GPU 패킷 I/O: gpudev vs GPUNetIO","section":"심화 · 데이터 이동","url":"gpu-packet-io.html","text":"gpu 패킷 io packet gpudev gpunetio doca dpdk gdakin 직접 송수신"},
+  {"title":"DPDK gpudev","section":"GPU 패킷 I/O","url":"gpu-packet-io.html#gpudev","text":"dpdk gpudev rte_gpudev rte_gpu_comm comm list mbuf 통신 리스트 cpu 주도 poll mode pmd gpu 메모리"},
+  {"title":"DOCA GPUNetIO","section":"GPU 패킷 I/O","url":"gpu-packet-io.html#gpunetio","text":"doca gpunetio gdakin gpudirect async kernel-initiated 커널 직접 송수신 세마포어 doca flow bluefield connectx"},
+  {"title":"gpudev vs GPUNetIO 비교","section":"GPU 패킷 I/O","url":"gpu-packet-io.html#compare","text":"비교 선택 cpu 주도 gpu 주도 지연 inline vran aerial 결정론"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
   {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},

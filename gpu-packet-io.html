@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심화 · GPU 패킷 I/O: gpudev vs GPUNetIO — GPU vRAN 노트</title>
+<meta name="description" content="패킷을 GPU 메모리로 직접 다루는 두 기술 — DPDK gpudev(CPU 주도)와 DOCA GPUNetIO(GPU 주도, GDAKIN)를 비교하고 vRAN 적용을 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 사이트 검색…" autocomplete="off" aria-label="사이트 검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>심화 · 데이터 이동</h4>
+      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
+      <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
+      <a href="case-studies.html">실전 사례: 두 진영</a>
+      <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
+      <a href="realtime.html">실시간 결정론 기법</a>
+      <a href="boundary.html">경계 설계: 버퍼 & 분할</a>
+      <a href="eaxc.html">eAxC ID 매핑</a>
+      <a href="gpu-packet-io.html">GPU 패킷 I/O</a>
+      <a href="gpu-packet-io.html#big" class="sub">핵심 차이</a>
+      <a href="gpu-packet-io.html#gpudev" class="sub">DPDK gpudev</a>
+      <a href="gpu-packet-io.html#gpunetio" class="sub">DOCA GPUNetIO</a>
+      <a href="gpu-packet-io.html#compare" class="sub">비교 · 선택</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / 심화 · 데이터 이동 / GPU 패킷 I/O</div>
+    <h1>GPU 패킷 I/O: gpudev vs GPUNetIO</h1>
+    <p class="lead">패킷을 GPU 메모리로 직접 다루는 두 기술입니다. 둘 다 <a href="interconnect.html#nic">GPUDirect</a> 위에 서지만 — <strong>CPU가 주도하느냐 GPU가 주도하느냐</strong>가 갈립니다.</p>
+
+    <h2 id="big">1. 핵심 차이 — 누가 주도하나</h2>
+    <div class="callout">
+      <div class="title">🔑 한 줄</div>
+      <p><strong>DPDK gpudev = CPU 주도</strong> (CPU가 Rx 루프 돌리고 <em>데이터만</em> GPU 메모리에) · <strong>DOCA GPUNetIO = GPU 주도</strong> (CUDA 커널이 <em>직접</em> 송수신 = GDAKIN, CPU가 데이터 경로에서 빠짐)</p>
+    </div>
+    <pre><code><span class="tok-com">gpudev   :</span>  NIC → GPU 메모리        CPU(PMD)가 "여기 패킷 왔다" 알려줌 → GPU 처리
+<span class="tok-com">GPUNetIO :</span>  NIC → GPU 메모리        GPU 커널이 직접 "패킷 집어옴"(receive) → 처리 → 직접 송신</code></pre>
+
+    <h2 id="gpudev">2. DPDK gpudev (<code>rte_gpudev</code>)</h2>
+    <p>
+      DPDK에 GPU를 끌어들이는 라이브러리(DPDK 21.11~). GPU 메모리 관리 + CPU↔GPU 조율을 추상화합니다. 단, <strong>DPDK는 본질적으로 CPU 프레임워크</strong>라 패킷 수신(poll-mode driver)은 여전히 CPU가 돌립니다.
+    </p>
+    <table>
+      <thead><tr><th>분류</th><th>함수</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td>GPU 메모리</td><td><code>rte_gpu_mem_alloc</code> / <code>_free</code></td><td>GPU 메모리 할당</td></tr>
+        <tr><td>호스트 메모리 등록</td><td><code>rte_gpu_mem_register</code></td><td>CPU 메모리를 GPU가 보게 핀(pin)</td></tr>
+        <tr><td>GPU↔CPU 매핑</td><td><code>rte_gpu_mem_cpu_map</code></td><td>GPU 메모리를 CPU에 노출</td></tr>
+        <tr><td><strong>통신 리스트</strong></td><td><code>rte_gpu_comm_*</code></td><td>CPU↔GPU 조율 (mbuf 주소 + 처리 상태 플래그)</td></tr>
+      </tbody>
+    </table>
+    <h3>동작 흐름</h3>
+    <pre><code>NIC → (GPUDirect) GPU 메모리에 패킷 적재
+CPU(PMD):  수신한 mbuf 주소들을 "comm list"에 채움 + 플래그 set
+GPU 커널:  comm list를 폴링 → 패킷 처리 → 완료 플래그 set
+CPU:       완료 플래그 보고 mbuf 정리(free)</code></pre>
+    <div class="callout tip">
+      <div class="title">💡 comm list = 공유 메모리 핸드셰이크</div>
+      <p>CPU와 CUDA 커널이 공유하는 메모리 구조로, 각 항목이 <strong>받은 패킷(mbuf) 주소 + 처리 상태 플래그</strong>를 담습니다. "여기 패킷 왔다 / 처리 끝났다"를 주고받죠. 당신이 물어본 <a href="boundary.html#completion">mbuf free 문제</a>의 표준 메커니즘이 바로 이것 — 완료 플래그로 free 시점을 잡습니다.</p>
+    </div>
+    <p><strong>한계</strong>: CPU가 매 배치 Rx해서 GPU에 "넘겨주는" 구조라, CPU가 제어 경로에 남아 있습니다.</p>
+
+    <h2 id="gpunetio">3. DOCA GPUNetIO</h2>
+    <p>
+      NVIDIA DOCA SDK의 라이브러리. gpudev의 한계(CPU 주도)를 넘어 <strong>GPU가 네트워크 통신을 직접 제어</strong>하게 합니다. 즉 <strong>CUDA 커널 안에서 패킷을 받고 보냅니다.</strong>
+    </p>
+    <h3>핵심 기술 — GDAKIN</h3>
+    <p>
+      <strong>GDAKIN = GPUDirect Async Kernel-Initiated Network.</strong> CUDA 커널이 직접 <code>receive</code>/<code>send</code>를 트리거 → <strong>CPU가 데이터 경로에서 완전히 빠집니다.</strong> DPDK로는 이게 안 되는 이유: 제어 경로 전체를 GPU로 옮겨야 하는데 DPDK는 CPU 프레임워크라서. 그래서 NVIDIA가 별도 라이브러리를 만든 것입니다.
+    </p>
+    <h3>구성 요소</h3>
+    <ul>
+      <li><strong>GPUDirect RDMA</strong> — 데이터 경로 가속 (NIC↔GPU 직접)</li>
+      <li><strong>GDAKIN</strong> — 커널 주도 송수신</li>
+      <li><strong>스마트 GPU 메모리 관리</strong></li>
+      <li><strong>세마포어</strong> — CPU↔GPU / GPU↔GPU 저지연 메시지 패싱 (gpudev comm list와 유사 역할)</li>
+      <li><strong>DOCA Flow</strong> — flow steering으로 특정 <a href="eaxc.html#steering">eAxC 흐름</a>을 GPU 큐로</li>
+    </ul>
+    <p>
+      API(<code>doca_gpu_dev_eth_rxq_receive_*</code>, <code>doca_gpu_dev_eth_txq_send_*</code>, 세마포어 연산 등)가 <strong>CUDA device 코드(커널)에서</strong> 호출됩니다.
+    </p>
+    <div class="callout">
+      <div class="title">🔧 요구 하드웨어</div>
+      <p>ConnectX-6 Dx/7 또는 BlueField-2/3 + GPU + GPUDirect.</p>
+    </div>
+
+    <h2 id="compare">4. 비교 · 선택</h2>
+    <table>
+      <thead><tr><th></th><th>DPDK gpudev</th><th>DOCA GPUNetIO</th></tr></thead>
+      <tbody>
+        <tr><td>주도권</td><td><strong>CPU</strong> (PMD가 Rx)</td><td><strong>GPU</strong> (커널이 Rx/Tx)</td></tr>
+        <tr><td>CPU 위치</td><td>데이터/제어 경로에 남음</td><td>데이터 경로에서 빠짐 (GDAKIN)</td></tr>
+        <tr><td>조율</td><td>comm list</td><td>세마포어</td></tr>
+        <tr><td>프레임워크</td><td>DPDK (CPU 중심)</td><td>DOCA (GPU 중심)</td></tr>
+        <tr><td>지연·CPU부하</td><td>낮음</td><td><strong>더 낮음</strong></td></tr>
+        <tr><td>성숙도/위치</td><td>먼저 나온 단계</td><td>NVIDIA 발전형 (vRAN·분석)</td></tr>
+      </tbody>
+    </table>
+    <h3>어느 걸 언제</h3>
+    <ul>
+      <li><strong>gpudev</strong> — DPDK 기반 파이프라인이 이미 있고 "데이터를 GPU 메모리로 보내고 CPU가 조율"이면 충분할 때. 진입 장벽 낮음.</li>
+      <li><strong>GPUNetIO</strong> — <strong>최저 지연·CPU 최소 개입</strong>이 필요한 inline vRAN, <a href="vran.html#aerial">NVIDIA Aerial</a> 류. GPU가 패킷 I/O까지 쥐는 가장 GPU-중심적 구조. 타이밍·CPU 우회·<a href="realtime.html">결정론</a>에 더 맞음.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="title">✅ 한 줄 정리</div>
+      <p>
+        <strong>gpudev는 "CPU가 GPU에게 패킷을 가져다주는" 모델, GPUNetIO는 "GPU가 직접 패킷을 집어오는" 모델</strong>입니다. 후자가 vRAN의 지향점이고, <a href="vran-dilemma.html#inline">inline 가속</a> 철학과 정확히 맞물립니다.
+      </p>
+    </div>
+
+    <h2 id="sources">참고 자료</h2>
+    <ul>
+      <li><a href="https://doc.dpdk.org/guides/prog_guide/gpudev.html" target="_blank" rel="noopener">DPDK gpudev Programming Guide</a></li>
+      <li><a href="https://developer.nvidia.com/blog/optimizing-inline-packet-processing-using-dpdk-and-gpudev-with-gpus/" target="_blank" rel="noopener">NVIDIA — Boosting Inline Packet Processing Using DPDK and GPUdev</a></li>
+      <li><a href="https://developer.nvidia.com/blog/inline-gpu-packet-processing-with-nvidia-doca-gpunetio/" target="_blank" rel="noopener">NVIDIA — Inline GPU Packet Processing with DOCA GPUNetIO</a></li>
+      <li><a href="https://docs.nvidia.com/doca/archive/2-8-0/doca+gpunetio/index.html" target="_blank" rel="noopener">DOCA GPUNetIO 문서</a></li>
+    </ul>
+
+    <div class="pager">
+      <a href="eaxc.html"><div class="dir">← 이전</div><div class="ttl">eAxC ID 매핑</div></a>
+      <a class="next" href="boundary.html#buffer"><div class="dir">관련 →</div><div class="ttl">mbuf 수명 관리</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
