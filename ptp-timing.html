@@ -46,6 +46,7 @@
       <a href="ptp-timing.html#rx" class="sub">수신 시간 정렬 처리</a>
       <a href="ptp-timing.html#before-after" class="sub">시간 배포 구조 변화</a>
       <a href="ptp-timing.html#time-access" class="sub">다른 모듈의 시간 접근</a>
+      <a href="ptp-timing.html#why-sysclock" class="sub">왜 시스템 시계인가</a>
       <a href="ptp-timing.html#slot" class="sub">GPU는 슬롯으로 일한다</a>
       <a href="ptp-timing.html#checklist" class="sub">재설계 체크리스트</a>
       <a href="realtime.html">실시간 결정론 기법</a>
@@ -383,6 +384,30 @@ PTP ───────┘                          ├─▶ (Accurate Send S
       <div class="title">💡 핵심 — 모두가 NIC을 직접 찌를 필요는 없다</div>
       <p>
         <code>phc2sys</code>가 PHC를 시스템시계에 흘려주므로, <strong>CPU 모듈들은 그냥 시스템시계(CLOCK_TAI)를 읽기만 해도 PHC에 동기된 시각</strong>을 얻습니다. 당신이 지금 "한 모듈이 시간을 계산해 뿌리던" 일을, 이제 <strong>phc2sys가 OS 차원에서 대신</strong>해 주는 셈이죠 (push → 공통 참조 pull). 단, 소프트웨어 클럭 읽기는 <strong>지터가 µs 수준</strong>이라 제어용엔 충분해도 <strong>데이터 평면 슬롯 타이밍엔 부적합</strong> — 그건 4절의 HW 타임스탬프를 씁니다. 또한 NIC이 여러 개면 <strong>PHC도 여러 개</strong>이니, 하나를 마스터로 정하고 나머지를 규율해 <strong>시간 도메인을 하나로</strong> 유지해야 합니다.</p>
+    </div>
+
+    <h3 id="why-sysclock">왜 NIC 직접 말고 Linux 시스템 시계인가</h3>
+    <p>
+      "NIC이 타임스탬프도 하는데 왜 굳이 시스템 시계를 가져왔나?" — 핵심은 <strong>"이벤트에 시각 찍기(timestamping)"와 "지금 몇 시? 질의(querying)"는 다른 일</strong>이라는 것입니다. NIC이 잘하는 건 전자고, 모듈들이 보통 필요한 건 후자입니다.
+    </p>
+    <table>
+      <thead><tr><th></th><th>NIC 하드웨어 타임스탬프</th><th>Linux 시스템 시계</th></tr></thead>
+      <tbody>
+        <tr><td>하는 일</td><td><strong>이벤트에 시각 찍기</strong> (패킷 도착/송신 순간)</td><td><strong>"지금 몇 시?" 질의 응답</strong></td></tr>
+        <tr><td>적합</td><td>데이터 평면, 패킷 단위</td><td>제어·로그·스케줄·일반</td></tr>
+      </tbody>
+    </table>
+    <p>시스템 시계를 쓴 합당한 이유들:</p>
+    <ul>
+      <li><strong>읽기가 압도적으로 싸다</strong> — 시스템 시계는 <code>vDSO</code>로 syscall 없이 <strong>수 ns</strong>(TSC 읽기). PHC 직접 읽기는 <strong>PCIe 왕복 → 수 µs</strong>. 시간을 자주 물으면 수백~수천 배 차이.</li>
+      <li><strong>표준 API</strong> — <code>clock_gettime(CLOCK_TAI)</code> 한 줄. <code>/dev/ptp</code> + ioctl은 하드웨어 특정적이고 복잡.</li>
+      <li><strong>시스템 전체가 하나의 타임베이스</strong> — 로그·스케줄러·<code>timerfd</code>·파일시스템·OAM이 다 시스템 시계 기준. 일부만 PHC를 직접 읽으면 <strong>두 타임베이스</strong>가 생겨 어긋남.</li>
+      <li><strong>하드웨어 추상화·이식성</strong> — NIC을 바꿔도 API 동일.</li>
+      <li><strong>phc2sys가 이미 다리</strong> — 시스템 시계 = PHC 품질(servo 오차 내). 굳이 PHC 직접 안 읽어도 <strong>PHC급 시간을 싸게</strong> 얻음.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="title">✅ 그래서 — 옳은 선택이고, GPU vRAN에서도 유지</div>
+      <p>NIC 타임스탬프는 <strong>이벤트(패킷)에 시각 찍기</strong>용, 시스템 시계는 <strong>"지금 몇 시?" 질의</strong>용 — 용도가 다릅니다. GPU vRAN에서 바뀌는 건 딱 하나: <strong>데이터 평면 패킷 타이밍만</strong> NIC 하드웨어 타임스탬프로 넘기고, <strong>제어·일반 시간 질의는 여전히 (phc2sys로 규율된) 시스템 시계</strong>를 씁니다. "PHC 있으니 다 직접 읽자"가 아니라 — <strong>자주·싸게 묻는 시간은 시스템 시계, 정밀한 이벤트 스탬프는 NIC</strong>입니다.</p>
     </div>
 
     <h2 id="slot">6. 결정적 포인트 — GPU는 절대 시각을 안 본다</h2>

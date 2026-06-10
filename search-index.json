@@ -35,6 +35,7 @@
   {"title":"수신 시간 정렬 처리 (RX)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#rx","text":"수신 rx 패킷 슬롯 정렬 헤더 eaxc frameid slotid symbol reorder 데드라인 트리거 erasure 소실 nic dpu 역할 분담 persistent kernel cuda graph"},
   {"title":"시간 배포 구조 변화","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#before-after","text":"시간 배포 before after cpu 시스템 시계 nic phc 진실원 슬롯 타이밍 push pull 브로드캐스트"},
   {"title":"다른 모듈의 시간 접근","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#time-access","text":"다른 모듈 cpu 시간 접근 phc2sys clock_tai clock_realtime /dev/ptp clock_gettime 직접 간접 도메인"},
+  {"title":"왜 NIC 직접 말고 시스템 시계인가","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#why-sysclock","text":"왜 linux 시스템 시계 nic 타임스탬프 질의 querying vdso pcie 비용 표준 api clock_gettime 타임베이스 phc2sys 이벤트"},
   {"title":"GPU는 슬롯으로 일한다","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#slot","text":"gpu 슬롯 인덱스 절대 시각 sfn 앵커링 도메인 분리 결정적"},
   {"title":"재설계 체크리스트","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#checklist","text":"재설계 체크리스트 nic dpu phc 슬롯 앵커링 결정론 측정 검증 tae 튜닝 numa isolation"},
   {"title":"세 개의 시계 (GPU≠CPU 시간)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#clocks","text":"세 시계 gpu cpu phc 시간 동일 다름 free-running drift 절대 시각 globaltimer clock64 oscillator"},
