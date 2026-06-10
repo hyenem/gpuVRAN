@@ -96,6 +96,54 @@ C[i] = A[i] + B[i];
 
 <span class="tok-com">// 👎 나쁨: 스레드가 stride(간격)로 띄엄띄엄 접근 → 운반이 쪼개짐</span>
 C[i * stride] = A[i * stride];</code></pre>
+    <div class="figure">
+      <svg viewBox="0 0 860 250" xmlns="http://www.w3.org/2000/svg">
+        <defs><marker id="a6" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#6e7681"/></marker></defs>
+        <style>
+          .th{fill:#1c2230;stroke:#2d333b;stroke-width:1}
+          .good{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .bad{fill:#2a1a12;stroke:#f0883e;stroke-width:1.4}
+          .empty{fill:#11161d;stroke:#2d333b;stroke-width:1}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:12px sans-serif;font-weight:700}
+          .o{fill:#f0883e;font:12px sans-serif;font-weight:700}
+          .ln{stroke:#6e7681;stroke-width:1.2;fill:none}
+        </style>
+        <!-- 좌: 병합 -->
+        <text class="g" x="20" y="22">👍 병합 (연속 주소) — 한 번에 운반</text>
+        <text class="ts" x="20" y="46">warp의 32 스레드 (일부만 표시)</text>
+        <g>
+          <rect class="th" x="30"  y="52" width="40" height="22"/><rect class="th" x="74" y="52" width="40" height="22"/><rect class="th" x="118" y="52" width="40" height="22"/><rect class="th" x="162" y="52" width="40" height="22"/><rect class="th" x="206" y="52" width="40" height="22"/><rect class="th" x="250" y="52" width="40" height="22"/><rect class="th" x="294" y="52" width="40" height="22"/><rect class="th" x="338" y="52" width="40" height="22"/>
+          <text class="ts" x="50" y="67" text-anchor="middle">T0</text><text class="ts" x="94" y="67" text-anchor="middle">T1</text><text class="ts" x="138" y="67" text-anchor="middle">T2</text><text class="ts" x="182" y="67" text-anchor="middle">T3</text><text class="ts" x="226" y="67" text-anchor="middle">T4</text><text class="ts" x="270" y="67" text-anchor="middle">T5</text><text class="ts" x="314" y="67" text-anchor="middle">T6</text><text class="ts" x="358" y="67" text-anchor="middle">T7</text>
+        </g>
+        <path class="ln" d="M50,74 L50,128" marker-end="url(#a6)"/><path class="ln" d="M94,74 L94,128" marker-end="url(#a6)"/><path class="ln" d="M138,74 L138,128" marker-end="url(#a6)"/><path class="ln" d="M182,74 L182,128" marker-end="url(#a6)"/><path class="ln" d="M226,74 L226,128" marker-end="url(#a6)"/><path class="ln" d="M270,74 L270,128" marker-end="url(#a6)"/><path class="ln" d="M314,74 L314,128" marker-end="url(#a6)"/><path class="ln" d="M358,74 L358,128" marker-end="url(#a6)"/>
+        <g>
+          <rect class="good" x="30" y="130" width="40" height="24"/><rect class="good" x="74" y="130" width="40" height="24"/><rect class="good" x="118" y="130" width="40" height="24"/><rect class="good" x="162" y="130" width="40" height="24"/><rect class="good" x="206" y="130" width="40" height="24"/><rect class="good" x="250" y="130" width="40" height="24"/><rect class="good" x="294" y="130" width="40" height="24"/><rect class="good" x="338" y="130" width="40" height="24"/>
+        </g>
+        <text class="ts" x="204" y="172" text-anchor="middle">메모리 칸: 0 1 2 3 4 5 6 7 (연속)</text>
+        <rect x="30" y="186" width="348" height="26" rx="4" fill="#16210f" stroke="#76b900"/>
+        <text class="g" x="204" y="204" text-anchor="middle">= 1번의 트랜잭션 (효율 ↑)</text>
+        <!-- 구분선 -->
+        <line x1="430" y1="10" x2="430" y2="240" stroke="#2d333b" stroke-width="1"/>
+        <!-- 우: 비병합 -->
+        <text class="o" x="448" y="22">👎 비병합 (흩어진 주소) — 여러 번 운반</text>
+        <text class="ts" x="448" y="46">같은 스레드들이 stride로 띄엄띄엄 접근</text>
+        <g>
+          <rect class="th" x="458" y="52" width="40" height="22"/><rect class="th" x="502" y="52" width="40" height="22"/><rect class="th" x="546" y="52" width="40" height="22"/><rect class="th" x="590" y="52" width="40" height="22"/>
+          <text class="ts" x="478" y="67" text-anchor="middle">T0</text><text class="ts" x="522" y="67" text-anchor="middle">T1</text><text class="ts" x="566" y="67" text-anchor="middle">T2</text><text class="ts" x="610" y="67" text-anchor="middle">T3</text>
+        </g>
+        <path class="ln" d="M478,74 L478,128" marker-end="url(#a6)"/><path class="ln" d="M522,74 L590,128" marker-end="url(#a6)"/><path class="ln" d="M566,74 L702,128" marker-end="url(#a6)"/><path class="ln" d="M610,74 L814,128" marker-end="url(#a6)"/>
+        <g>
+          <rect class="bad" x="458" y="130" width="40" height="24"/><rect class="empty" x="502" y="130" width="40" height="24"/><rect class="bad" x="546" y="130" width="40" height="24"/><rect class="empty" x="590" y="130" width="40" height="24"/><rect class="bad" x="634" y="130" width="40" height="24"/><rect class="empty" x="678" y="130" width="40" height="24"/><rect class="bad" x="722" y="130" width="40" height="24"/><rect class="empty" x="766" y="130" width="40" height="24"/><rect class="bad" x="794" y="130" width="40" height="24"/>
+        </g>
+        <text class="ts" x="640" y="172" text-anchor="middle">메모리 칸: 0 _ 2 _ 4 _ 6 _ 8 (띄엄띄엄)</text>
+        <rect x="458" y="186" width="376" height="26" rx="4" fill="#2a1a12" stroke="#f0883e"/>
+        <text class="o" x="646" y="204" text-anchor="middle">= 트랜잭션 여러 번 (대역폭 낭비)</text>
+      </svg>
+      <div class="figcap">그림 — 이웃 스레드가 이웃 메모리를 읽으면(좌) 한 번에 묶여 운반되고, 흩어지면(우) 운반이 쪼개져 느려진다</div>
+    </div>
+
     <div class="callout tip">
       <div class="title">💡 황금률</div>
       <p><strong>"이웃한 스레드가 이웃한 메모리를 읽게 하라."</strong> 2차원 데이터(행렬 등)를 다룰 땐, <strong>이웃 스레드(threadIdx.x가 1 차이)가 이웃한 열을 읽도록</strong> 인덱스를 짜세요. 행과 열 순서를 바꾸기만 해도 몇 배 빨라지는 일이 흔합니다.</p>

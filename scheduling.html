@@ -92,6 +92,44 @@
 warp B:      [계산][계산]               ← 그동안 B를 시킴
 warp C:            [계산][계산]          ← C도 시킴
 warp D:                  [계산]          ← D도 → 계산기(ALU)가 안 놂!</code></pre>
+    <div class="figure">
+      <svg viewBox="0 0 860 250" xmlns="http://www.w3.org/2000/svg">
+        <style>
+          .comp{fill:#16210f;stroke:#76b900;stroke-width:1.5}
+          .wait{fill:#1c2230;stroke:#2d333b;stroke-width:1}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#76b900;font:11px sans-serif}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .lbl{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+        </style>
+        <text class="d" x="20" y="20">시간 →  (한 warp가 메모리를 기다리는 동안, 다른 warp가 계산)</text>
+        <!-- warp A -->
+        <text class="lbl" x="20" y="58">warp A</text>
+        <rect class="comp" x="130" y="42" width="120" height="26" rx="3"/><text class="ts" x="190" y="59" text-anchor="middle">계산</text>
+        <rect class="wait" x="250" y="42" width="490" height="26" rx="3"/><text class="d" x="495" y="59" text-anchor="middle">메모리 대기 …</text>
+        <!-- warp B -->
+        <text class="lbl" x="20" y="98">warp B</text>
+        <rect class="wait" x="130" y="82" width="120" height="26" rx="3"/><text class="d" x="190" y="99" text-anchor="middle">대기</text>
+        <rect class="comp" x="250" y="82" width="120" height="26" rx="3"/><text class="ts" x="310" y="99" text-anchor="middle">계산</text>
+        <rect class="wait" x="370" y="82" width="370" height="26" rx="3"/><text class="d" x="555" y="99" text-anchor="middle">대기 …</text>
+        <!-- warp C -->
+        <text class="lbl" x="20" y="138">warp C</text>
+        <rect class="wait" x="130" y="122" width="240" height="26" rx="3"/><text class="d" x="250" y="139" text-anchor="middle">대기</text>
+        <rect class="comp" x="370" y="122" width="120" height="26" rx="3"/><text class="ts" x="430" y="139" text-anchor="middle">계산</text>
+        <rect class="wait" x="490" y="122" width="250" height="26" rx="3"/><text class="d" x="615" y="139" text-anchor="middle">대기 …</text>
+        <!-- warp D -->
+        <text class="lbl" x="20" y="178">warp D</text>
+        <rect class="wait" x="130" y="162" width="360" height="26" rx="3"/><text class="d" x="310" y="179" text-anchor="middle">대기</text>
+        <rect class="comp" x="490" y="162" width="120" height="26" rx="3"/><text class="ts" x="550" y="179" text-anchor="middle">계산</text>
+        <rect class="wait" x="610" y="162" width="130" height="26" rx="3"/><text class="d" x="675" y="179" text-anchor="middle">대기</text>
+        <!-- ALU busy bar -->
+        <rect x="130" y="206" width="480" height="22" rx="3" fill="#16210f" stroke="#76b900" stroke-width="1.5"/>
+        <text class="ts" x="370" y="222" text-anchor="middle">계산기(ALU) 항상 바쁨 — 빈 시간 없음</text>
+        <text class="d" x="624" y="222">← latency hiding</text>
+      </svg>
+      <div class="figcap">그림 — warp 스케줄러가 "준비된 warp"를 골라 돌려서, 메모리 대기 시간을 다른 warp의 계산으로 채운다 (그래서 occupancy가 중요)</div>
+    </div>
+
     <div class="callout tip">
       <div class="title">💡 latency hiding (지연 숨기기)</div>
       <p>이게 GPU의 핵심 비법입니다. CPU는 큰 캐시로 메모리 지연을 <strong>줄이려</strong> 하지만, GPU는 <strong>대기 중인 다른 일꾼으로 그 시간을 메워(가려) 버립니다.</strong> 그러려면 당연히 SM에 <strong>대기 중인 warp가 충분히 많아야</strong> 하죠. 그래서 occupancy(일꾼 채움 정도)가 중요한 거예요. 바로 다음 절입니다.</p>

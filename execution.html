@@ -92,6 +92,53 @@
 ④ GPU(주방):   큐에서 커널을 꺼내 grid(일감 전체)를 펼침
                → 'GigaThread 엔진'이 블록들을 각 SM(공장)에 분배
 ⑤ 각 SM:       배정받은 블록의 warp(32명 조)를 스케줄해 실제 실행</code></pre>
+    <div class="figure">
+      <svg viewBox="0 0 860 250" xmlns="http://www.w3.org/2000/svg">
+        <defs><marker id="a3" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#6e7681"/></marker></defs>
+        <style>
+          .bx{fill:#161b22;stroke:#2d333b;stroke-width:1.4}
+          .cpu{fill:#1a1430;stroke:#a371f7;stroke-width:1.8}
+          .gpu{fill:#0d1117;stroke:#76b900;stroke-width:1.8}
+          .sm{fill:#1c2230;stroke:#2d333b;stroke-width:1}
+          .t{fill:#e6edf3;font:13px sans-serif}
+          .ts{fill:#e6edf3;font:11px sans-serif}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .v{fill:#c29bff;font:11px sans-serif;font-weight:700}
+          .ln{stroke:#6e7681;stroke-width:1.4;fill:none}
+          .dln{stroke:#a371f7;stroke-width:1.4;fill:none;stroke-dasharray:5 4}
+        </style>
+        <!-- CPU -->
+        <rect class="cpu" x="18" y="74" width="150" height="60" rx="8"/>
+        <text class="t" x="93" y="100" text-anchor="middle">CPU (호스트)</text>
+        <text class="d" x="93" y="120" text-anchor="middle">kernel&lt;&lt;&lt;&gt;&gt;&gt;()</text>
+        <!-- enqueue -->
+        <path class="ln" d="M168,104 L214,104" marker-end="url(#a3)"/>
+        <text class="d" x="191" y="92" text-anchor="middle">① 제출</text>
+        <text class="d" x="191" y="126" text-anchor="middle">~µs</text>
+        <!-- 큐 -->
+        <rect class="bx" x="216" y="74" width="104" height="60" rx="8"/>
+        <text class="t" x="268" y="100" text-anchor="middle">HW 큐</text>
+        <text class="d" x="268" y="120" text-anchor="middle">(대기열)</text>
+        <!-- arrow -->
+        <path class="ln" d="M320,104 L368,104" marker-end="url(#a3)"/>
+        <!-- GPU -->
+        <rect class="gpu" x="370" y="66" width="200" height="76" rx="8"/>
+        <text class="t" x="470" y="92" text-anchor="middle">GPU: grid 펼침</text>
+        <text class="d" x="470" y="112" text-anchor="middle">GigaThread 엔진이</text>
+        <text class="d" x="470" y="128" text-anchor="middle">블록을 SM에 분배</text>
+        <!-- arrow to SMs -->
+        <path class="ln" d="M570,104 L616,104" marker-end="url(#a3)"/>
+        <!-- SMs -->
+        <rect class="sm" x="618" y="58" width="120" height="34" rx="5"/><text class="ts" x="678" y="80" text-anchor="middle">SM 0 (블록 실행)</text>
+        <rect class="sm" x="618" y="98" width="120" height="34" rx="5"/><text class="ts" x="678" y="120" text-anchor="middle">SM 1 (블록 실행)</text>
+        <rect class="sm" x="618" y="138" width="120" height="34" rx="5"/><text class="ts" x="678" y="160" text-anchor="middle">SM 2 (블록 실행)</text>
+        <!-- 비동기 표시 -->
+        <path class="dln" d="M93,134 C93,200 470,200 470,200" marker-end="url(#a3)"/>
+        <text class="v" x="280" y="222" text-anchor="middle">③ CPU는 결과를 안 기다리고 바로 다음 줄로 (비동기!) — 결과 필요하면 cudaDeviceSynchronize()</text>
+      </svg>
+      <div class="figcap">그림 — 커널 호출은 "큐에 주문 제출". CPU는 안 기다리고 다음 줄로 가고, GPU가 알아서 블록을 SM에 펼쳐 실행한다</div>
+    </div>
+
     <div class="callout warn">
       <div class="title">⚠️ 가장 중요: 커널 실행은 "비동기"다</div>
       <p>
