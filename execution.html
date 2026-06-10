@@ -6,6 +6,7 @@
 <title>③ CUDA 동작 방식 (실행 모델) — GPU·CUDA 노트</title>
 <meta name="description" content="커널 launch가 실제로 어떻게 도나, 비동기·스트림, 이벤트, 블록이 SM에 배정되는 과정을 친절하게 설명합니다.">
 <link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
 <body>
 <button class="menu-toggle" aria-label="메뉴">☰</button>
@@ -178,9 +179,43 @@
 <span class="tok-fn">kernel</span>&lt;&lt;&lt;b, t, <span class="tok-num">0</span>, s1&gt;&gt;&gt;(dA0);
 <span class="tok-fn">cudaMemcpyAsync</span>(dA1, hA1, sz, cudaMemcpyHostToDevice, s2);
 <span class="tok-fn">kernel</span>&lt;&lt;&lt;b, t, <span class="tok-num">0</span>, s2&gt;&gt;&gt;(dA1);</code></pre>
-    <pre><code><span class="tok-com"># 겹침(overlap) 효과 — 시간이 줄어듦</span>
-스트림1:  [복사0][커널0]
-스트림2:        [복사1][커널1]   ← 복사1이 커널0과 같은 시간에 진행</code></pre>
+    <div class="figure">
+      <svg viewBox="0 0 860 260" xmlns="http://www.w3.org/2000/svg">
+        <style>
+          .cp{fill:#14233a;stroke:#58a6ff;stroke-width:1.4}
+          .kn{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .b{fill:#58a6ff;font:11px sans-serif}
+          .g{fill:#76b900;font:11px sans-serif}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .lbl{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+          .save{fill:#76b900;font:13px sans-serif;font-weight:700}
+        </style>
+        <text class="d" x="20" y="22">시간 →</text>
+        <!-- 스트림 1개 -->
+        <text class="lbl" x="20" y="56">스트림 1개 (순차)</text>
+        <rect class="cp" x="170" y="40" width="150" height="26" rx="4"/><text class="b" x="245" y="57" text-anchor="middle">복사 0</text>
+        <rect class="kn" x="322" y="40" width="150" height="26" rx="4"/><text class="g" x="397" y="57" text-anchor="middle">커널 0</text>
+        <rect class="cp" x="474" y="40" width="150" height="26" rx="4"/><text class="b" x="549" y="57" text-anchor="middle">복사 1</text>
+        <rect class="kn" x="626" y="40" width="150" height="26" rx="4"/><text class="g" x="701" y="57" text-anchor="middle">커널 1</text>
+        <line x1="776" y1="34" x2="776" y2="180" stroke="#f0883e" stroke-width="1.2" stroke-dasharray="5 4"/>
+        <!-- 스트림 2개 -->
+        <text class="lbl" x="20" y="118">스트림 2개 (overlap)</text>
+        <text class="d" x="40" y="140">s1:</text>
+        <rect class="cp" x="170" y="124" width="150" height="26" rx="4"/><text class="b" x="245" y="141" text-anchor="middle">복사 0</text>
+        <rect class="kn" x="322" y="124" width="150" height="26" rx="4"/><text class="g" x="397" y="141" text-anchor="middle">커널 0</text>
+        <text class="d" x="40" y="172">s2:</text>
+        <rect class="cp" x="322" y="156" width="150" height="26" rx="4"/><text class="b" x="397" y="173" text-anchor="middle">복사 1</text>
+        <rect class="kn" x="474" y="156" width="150" height="26" rx="4"/><text class="g" x="549" y="173" text-anchor="middle">커널 1</text>
+        <line x1="624" y1="110" x2="624" y2="190" stroke="#76b900" stroke-width="1.2" stroke-dasharray="5 4"/>
+        <!-- 절약 표시 -->
+        <text class="save" x="700" y="160" text-anchor="middle">시간 절약!</text>
+        <text class="d" x="700" y="178" text-anchor="middle">(복사1이 커널0과 동시)</text>
+        <!-- 설명 -->
+        <text class="d" x="20" y="226">파랑 = CPU↔GPU 복사 (복사 엔진이 수행) · 초록 = 커널 (SM이 수행) → 서로 다른 장치라 동시에 가능</text>
+      </svg>
+      <div class="figcap">그림 — 스트림 2개로 나누면 "복사"와 "계산"이 다른 장치에서 동시에 진행되어 전체 시간이 준다 (pinned memory 필수)</div>
+    </div>
     <div class="callout cpu">
       <div class="title">👤 CPU 개발자라면 — "스트림 = 스레드"가 아닙니다</div>
       <p>스트림을 CPU의 워커 스레드처럼 생각하기 쉬운데, 다릅니다. 스트림은 <strong>일을 하는 주체가 아니라 "순서가 보장되는 작업 대기열(큐)"</strong>일 뿐이에요. 실제 일은 GPU의 SM들이 하고, 스트림은 그저 "이 큐에 넣은 것들은 순서대로, 다른 큐와는 병렬로 처리해도 됨"이라는 <strong>의존성 표시</strong>입니다. 그래서 "스트림 8개 = 8배 빠름"이 아니라, 스트림은 <strong>"복사하는 동안 계산도 같이 돌려서 빈 시간을 없애는"</strong> 용도예요(자원이 남을 때만 효과). CPU의 작업 큐 + 비동기 실행 모델에 가장 가깝습니다.</p>
