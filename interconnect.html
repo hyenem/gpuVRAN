@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심화 · CPU·GPU·NIC 데이터 이동 — GPU vRAN 노트</title>
+<meta name="description" content="CPU와 GPU는 메모리를 공유하는가? PCIe·NVLink, DMA, pinned memory, nvidia-smi topo, 그리고 NIC와 GPUDirect RDMA를 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>심화 · 데이터 이동</h4>
+      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
+      <a href="interconnect.html#bigpic" class="sub">시스템 큰 그림</a>
+      <a href="interconnect.html#share" class="sub">메모리 공유 여부</a>
+      <a href="interconnect.html#pcie" class="sub">PCIe · NVLink</a>
+      <a href="interconnect.html#transfer" class="sub">DMA · 전송 원리</a>
+      <a href="interconnect.html#smi" class="sub">nvidia-smi · topo</a>
+      <a href="interconnect.html#nic" class="sub">NIC · GPUDirect</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / 심화 · 데이터 이동</div>
+    <h1>심화 · CPU · GPU · NIC 데이터 이동</h1>
+    <p class="lead">"CPU와 GPU는 정보를 어떻게 주고받나? 메모리는 공유하나? NIC은 어떻게 연결되나?" — vRAN 성능을 좌우하는 가장 중요한 주제입니다. 신호처리 커널이 아무리 빨라도, 데이터 이동이 느리면 실시간 마감을 못 맞춥니다.</p>
+
+    <h2 id="bigpic">1. 시스템 큰 그림</h2>
+    <p>
+      일반적인 GPU 서버(외장/discrete GPU)는 이렇게 생겼습니다. <strong>CPU와 GPU는 물리적으로 분리된 칩</strong>이고, 각자 <strong>자기 메모리</strong>를 가지며, <strong>PCIe</strong>라는 버스로 연결됩니다. NIC(네트워크 카드)도 같은 PCIe에 붙습니다.
+    </p>
+    <pre><code>          ┌─────────────── 메인보드 ───────────────┐
+          │                                          │
+  ┌───────┴───────┐                       ┌──────────┴──────────┐
+  │   CPU         │                       │   GPU               │
+  │  + 시스템 RAM  │◀───── PCIe 버스 ─────▶│  + VRAM (전용 메모리) │
+  │  (DDR, 수십GB) │                       │  (HBM/GDDR, 빠름)    │
+  └───────┬───────┘                       └─────────────────────┘
+          │                                          ▲
+          │  PCIe                                     │ (GPUDirect 시 직접)
+          ▼                                          │
+  ┌───────────────┐                                  │
+  │   NIC         │──────────────────────────────────┘
+  │ (네트워크 카드) │      외부에서 들어오는 데이터(예: 안테나 IQ)
+  └───────────────┘</code></pre>
+    <p>
+      여기서 핵심 질문 3개를 차례로 풉니다: ① CPU·GPU가 메모리를 공유하나? ② PCIe·NVLink가 뭔가? ③ NIC 데이터가 GPU로 어떻게 들어가나?
+    </p>
+
+    <h2 id="share">2. CPU와 GPU는 메모리를 공유하는가?</h2>
+    <p>
+      <strong>경우에 따라 다릅니다.</strong> 3가지 모델을 구분하는 게 중요합니다.
+    </p>
+
+    <h3>① 분리형 (Discrete GPU) — 공유 안 함 <span class="pill">가장 일반적</span></h3>
+    <p>
+      데스크탑/서버의 외장 GPU(A100, H100, RTX 등). CPU는 시스템 RAM, GPU는 VRAM을 <strong>따로</strong> 갖습니다. 데이터를 쓰려면 <strong>PCIe로 명시적 복사</strong>가 필요합니다. <a href="cuda.html#first-kernel">Part 2의 <code>cudaMemcpy</code></a>가 바로 이 복사입니다.
+    </p>
+    <pre><code><span class="tok-com">// CPU RAM(hA) → GPU VRAM(dA) 로 물리적 복사가 일어남</span>
+<span class="tok-fn">cudaMemcpy</span>(dA, hA, bytes, cudaMemcpyHostToDevice);</code></pre>
+
+    <h3>② Unified Memory — "가상으로" 공유</h3>
+    <p>
+      <code>cudaMallocManaged</code>로 할당하면 CPU·GPU가 <strong>같은 포인터</strong>를 쓸 수 있습니다. 단, 물리적으로 합쳐진 건 아니고 — 시스템이 필요할 때 <strong>페이지를 자동으로 복사·이동(migration)</strong>해 줍니다. 편하지만, 뒤에서 여전히 PCIe 전송이 일어나므로 성능 튜닝은 따로 필요합니다.
+    </p>
+
+    <h3>③ 물리적 공유 (Coherent) — 진짜 공유 <span class="pill">vRAN 트렌드</span></h3>
+    <p>
+      <strong>NVIDIA Grace Hopper(GH200)</strong> 같은 통합 구조에서는 CPU(Grace)와 GPU(Hopper)가 <strong>NVLink-C2C</strong>로 연결되어 <strong>물리적으로 메모리를 일관성(coherence) 있게 공유</strong>합니다. 복사 없이 양쪽이 같은 데이터를 직접 접근 → 지연이 크게 줄어듭니다. (참고: 노트북의 통합 GPU나 일부 SoC도 메모리를 공유하지만, 이건 저성능 쪽 이야기입니다.)
+    </p>
+    <table>
+      <thead><tr><th>모델</th><th>메모리</th><th>데이터 전달</th><th>예시</th></tr></thead>
+      <tbody>
+        <tr><td>분리형</td><td>RAM / VRAM 분리</td><td>PCIe로 명시적 복사</td><td>A100, H100(PCIe)</td></tr>
+        <tr><td>Unified Memory</td><td>분리(가상 통합)</td><td>자동 페이지 이동</td><td>위 GPU + 소프트웨어</td></tr>
+        <tr><td>물리적 공유</td><td>일관성 공유</td><td>복사 없이 직접 접근</td><td>Grace Hopper GH200</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <div class="title">📡 vRAN 관점</div>
+      <p>vRAN은 데이터를 끊임없이 흘려보내므로 PCIe 복사 한 번 한 번이 지연 예산을 갉아먹습니다. 그래서 NVIDIA가 vRAN 플랫폼을 <strong>Grace Hopper(메모리 공유)</strong> 방향으로 미는 것입니다 — CPU↔GPU 복사 자체를 없애려는 거죠.</p>
+    </div>
+
+    <h2 id="pcie">3. PCIe vs NVLink — 연결 통로</h2>
+    <ul>
+      <li><strong>PCIe</strong> — 모든 부품(GPU, NIC, SSD)을 잇는 범용 버스. 세대마다 대역폭이 오릅니다(예: PCIe Gen5 x16 ≈ 양방향 128GB/s급). 범용이지만 GPU끼리 통신엔 상대적으로 느립니다.</li>
+      <li><strong>NVLink</strong> — NVIDIA의 <strong>GPU 전용 고속 링크</strong>. PCIe보다 훨씬 높은 대역폭으로 GPU↔GPU(또는 Grace의 C2C로 CPU↔GPU)를 연결. 여러 GPU로 부하를 나누는 멀티-GPU vRAN에서 중요합니다.</li>
+    </ul>
+    <div class="callout tip">
+      <div class="title">💡 왜 대역폭이 중요한가</div>
+      <p>GPU 연산은 빠른데 데이터가 그 속도로 도착하지 못하면 GPU가 놀게 됩니다(<a href="gpu-architecture.html#memory">memory-bound</a>의 시스템 버전). "연산 능력"만큼 "데이터를 얼마나 빨리 넣고 빼느냐(I/O 대역폭)"가 vRAN 설계의 핵심 지표입니다.</p>
+    </div>
+
+    <h2 id="transfer">4. 실제 전송은 어떻게? — DMA와 Pinned Memory</h2>
+    <p>
+      CPU가 데이터를 한 바이트씩 GPU에 떠먹이는 게 아닙니다. <strong>DMA(Direct Memory Access)</strong> 엔진이 CPU를 대신해 메모리 블록을 옮깁니다. CPU는 "옮겨라"라고 지시만 하고 다른 일을 합니다.
+    </p>
+    <ul>
+      <li><strong>Pageable memory</strong>(일반 <code>malloc</code>) — OS가 페이지를 옮길 수 있어, DMA 전에 임시 버퍼 복사가 추가로 생겨 느림.</li>
+      <li><strong>Pinned (page-locked) memory</strong>(<code>cudaMallocHost</code>) — 물리 주소가 고정되어 DMA가 바로 가능 → 더 빠르고 <strong>비동기 전송</strong> 가능. <a href="cuda.html#streams">스트림 overlap</a>의 전제 조건입니다.</li>
+    </ul>
+    <pre><code><span class="tok-key">float</span>* hA;
+<span class="tok-fn">cudaMallocHost</span>(&hA, bytes);   <span class="tok-com">// pinned memory → 빠른 DMA + 비동기 복사 가능</span>
+<span class="tok-fn">cudaMemcpyAsync</span>(dA, hA, bytes, cudaMemcpyHostToDevice, stream);</code></pre>
+
+    <h2 id="smi">5. nvidia-smi 와 토폴로지 보기</h2>
+    <p>
+      <strong><code>nvidia-smi</code></strong> (NVIDIA System Management Interface)는 GPU 상태를 보는 기본 도구입니다. 사용률, 메모리, 온도, 전력, 돌고 있는 프로세스를 보여줍니다.
+    </p>
+    <pre><code><span class="tok-com"># GPU 현재 상태 (사용률·메모리·온도·프로세스)</span>
+nvidia-smi
+
+<span class="tok-com"># 1초마다 갱신해서 모니터링</span>
+nvidia-smi -l 1</code></pre>
+    <p>
+      그리고 궁금해하신 <strong>"연결 그래프"</strong> — 어떤 GPU·NIC가 어떻게 이어져 있는지는 이 명령으로 봅니다:
+    </p>
+    <pre><code><span class="tok-com"># CPU·GPU·NIC 간 연결 토폴로지를 행렬로 출력</span>
+nvidia-smi topo -m</code></pre>
+    <p>출력의 기호가 연결 종류를 뜻합니다:</p>
+    <table>
+      <thead><tr><th>기호</th><th>의미</th></tr></thead>
+      <tbody>
+        <tr><td><code>NV#</code></td><td>NVLink로 직접 연결 (가장 빠름, #는 링크 수)</td></tr>
+        <tr><td><code>PIX / PXB</code></td><td>같은 PCIe 스위치를 통한 연결 (빠름)</td></tr>
+        <tr><td><code>NODE / SYS</code></td><td>같은/다른 CPU(NUMA 노드)를 거치는 연결 (느림)</td></tr>
+        <tr><td><code>X</code></td><td>자기 자신</td></tr>
+      </tbody>
+    </table>
+    <div class="callout tip">
+      <div class="title">💡 왜 보냐면</div>
+      <p>GPU와 NIC가 <strong>같은 PCIe 스위치/같은 CPU 소켓(NUMA 노드)</strong>에 붙어 있어야 GPUDirect가 빠릅니다. 멀리 떨어져 있으면(SYS) CPU 간 링크를 거쳐 지연이 늘죠. vRAN 서버를 셋업할 때 이 토폴로지를 보고 NIC과 GPU를 같은 노드에 배치합니다.</p>
+    </div>
+
+    <h2 id="nic">6. NIC과 GPU — GPUDirect RDMA</h2>
+    <p>
+      이제 핵심입니다. 안테나에서 들어온 무선 데이터는 <strong>NIC(네트워크 카드)</strong>를 통해 서버로 들어옵니다. 이 데이터가 GPU까지 가는 경로가 두 가지입니다.
+    </p>
+
+    <h3>일반 경로 (느림) — CPU를 거침</h3>
+    <pre><code>NIC ──▶ CPU 시스템 RAM ──▶ (cudaMemcpy) ──▶ GPU VRAM
+        ↑ CPU가 개입, 메모리 2번 거침 → 지연·지터 증가</code></pre>
+
+    <h3>GPUDirect RDMA (빠름) — CPU 우회 <span class="pill">vRAN 핵심</span></h3>
+    <pre><code>NIC ──────────(PCIe 직접 DMA)──────────▶ GPU VRAM
+     CPU·시스템 RAM을 건너뜀 → 지연 최소, CPU 부하 0</code></pre>
+    <p>
+      <strong>GPUDirect RDMA</strong>는 NIC이 시스템 RAM을 거치지 않고 <strong>GPU 메모리에 직접 DMA</strong>로 데이터를 쓰는 기술입니다. CPU가 데이터 경로에서 완전히 빠지므로 지연과 지터가 크게 줄어듭니다 — μs 단위 마감이 걸린 vRAN에 결정적입니다.
+    </p>
+    <div class="callout">
+      <div class="title">🔧 관련 기술 묶음</div>
+      <ul>
+        <li><strong>GPUDirect RDMA</strong> — NIC ↔ GPU 직접 전송.</li>
+        <li><strong>DPDK</strong> — 커널 네트워크 스택을 우회해 유저공간에서 초저지연 패킷 처리. O-RAN Fronthaul 패킷 수신에 사용.</li>
+        <li><strong>DOCA / BlueField DPU</strong> — NIC에 프로세서를 얹은 <strong>DPU</strong>가 패킷 처리·시각 동기(PTP)를 전담해 CPU·GPU를 신호처리에 집중시킴.</li>
+        <li><strong>PTP (정밀 시각 동기)</strong> — Fronthaul은 ns~μs 수준 시각 동기가 필수. NIC/DPU가 담당.</li>
+      </ul>
+    </div>
+
+    <h3>전체 그림: vRAN 데이터 흐름</h3>
+    <pre><code>  [안테나/RU]
+      │ Fronthaul (eCPRI 패킷, O-RAN 7.2x)
+      ▼
+  ┌─────────┐   GPUDirect RDMA
+  │  NIC/DPU │═══════════════════╗   (CPU·RAM 우회)
+  └─────────┘                    ║
+                                 ▼
+                          ┌────────────┐
+       제어·스케줄 ◀──────│  GPU (cuPHY) │  L1 신호처리
+       ┌─────────┐        │   VRAM      │  (FFT·채널추정·
+       │  CPU    │◀──────▶│             │   MIMO·LDPC)
+       │ (Grace) │ NVLink │            │
+       └─────────┘  -C2C  └────────────┘</code></pre>
+    <p>
+      정리하면 — NIC/DPU가 안테나 데이터를 <strong>GPUDirect로 GPU에 직접</strong> 넣고, GPU가 <a href="vran.html#l1">L1 신호처리</a>를 인라인으로 끝내며, CPU(Grace)는 <strong>NVLink로 메모리를 공유</strong>하며 제어·스케줄링만 맡습니다. 데이터 복사를 최대한 없애는 게 전체 설계 철학입니다.
+    </p>
+
+    <div class="callout tip">
+      <div class="title">✅ 이 페이지 정리</div>
+      <p>
+        ① 보통의 외장 GPU는 메모리를 <strong>공유하지 않고</strong> PCIe로 복사한다. Grace Hopper는 NVLink로 <strong>물리적 공유</strong>. ② 전송은 DMA가 하고, pinned memory가 빠르다. ③ <code>nvidia-smi topo -m</code>으로 GPU·NIC 연결을 본다. ④ NIC→GPU는 <strong>GPUDirect RDMA</strong>로 CPU를 건너뛰는 게 vRAN의 핵심. "복사를 없애라"가 전체 키워드입니다.
+      </p>
+    </div>
+
+    <div class="pager">
+      <a href="gpu-architecture.html"><div class="dir">← 관련</div><div class="ttl">Part 1 · GPU 아키텍처</div></a>
+      <a class="next" href="vran.html"><div class="dir">이어서 →</div><div class="ttl">Part 3 · GPU vRAN 가속</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
