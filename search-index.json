@@ -68,6 +68,11 @@
   {"title":"CP/UP 핸드오프 — 지연 없이?","section":"GPU 메모리 공유","url":"gpu-mem-share.html#handoff","text":"cp up 핸드오프 설정 t1a 리드타임 커널 launch 메모리 배리어 생산자 소비자 ordering 가시성 visibility"},
   {"title":"CP가 제때 안 끝나면 (게이트 위반)","section":"GPU 메모리 공유","url":"gpu-mem-share.html#cp-late","text":"cp 늦으면 크리티컬 패스 게이트 위반 우선순위 분리 전용 코어 데드라인 슬롯 드롭 erasure under-provisioned 자원 경합"},
   {"title":"챙길 디테일 (constant memory)","section":"GPU 메모리 공유","url":"gpu-mem-share.html#details","text":"constant memory read-only 브로드캐스트 __threadfence cooperative groups cpu gpu 경계 cumac"},
+  {"title":"TX 스케줄링 & GPU 선점","section":"심화 · 데이터 이동","url":"tx-scheduling.html","text":"tx 스케줄링 gpu 선점 preemption edf 데드라인 윈도우 admission control nic 송신"},
+  {"title":"책임 분담 (NIC=시각, GPU=데드라인)","section":"TX 스케줄링","url":"tx-scheduling.html#responsibility","text":"nic 송신 시각 precision gpu 데드라인 accurate send scheduling 책임 윈도우 드롭"},
+  {"title":"처리 순서 = 실시간 스케줄링 (EDF)","section":"TX 스케줄링","url":"tx-scheduling.html#ordering","text":"처리 순서 edf earliest deadline first 슬롯 순서 우선순위 스트림 fifo 임의"},
+  {"title":"GPU 선점이 약하다","section":"TX 스케줄링","url":"tx-scheduling.html#preemption","text":"gpu 선점 preemption 커널 점유 sm mig mps 스트림 우선순위 cudastreamcreatewithpriority oversubscribe head-of-line blocking run-to-completion"},
+  {"title":"윈도우 미스 + CP/UP 경합","section":"TX 스케줄링","url":"tx-scheduling.html#contention","text":"윈도우 미스 드롭 fault under-provisioned cp up 경합 admission control 슬롯 데드라인 worst-case provisioning"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
   {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},
