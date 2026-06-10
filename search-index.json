@@ -37,6 +37,7 @@
   {"title":"다른 모듈의 시간 접근","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#time-access","text":"다른 모듈 cpu 시간 접근 phc2sys clock_tai clock_realtime /dev/ptp clock_gettime 직접 간접 도메인"},
   {"title":"왜 NIC 직접 말고 시스템 시계인가","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#why-sysclock","text":"왜 linux 시스템 시계 nic 타임스탬프 질의 querying vdso pcie 비용 표준 api clock_gettime 타임베이스 phc2sys 이벤트"},
   {"title":"GPU는 슬롯으로 일한다","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#slot","text":"gpu 슬롯 인덱스 절대 시각 sfn 앵커링 도메인 분리 결정적"},
+  {"title":"모듈이 슬롯/심볼 얻기 (유도 vs 배포)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#slot-derive","text":"슬롯 심볼 번호 유도 계산 배포 sfn 에폭 앵커 numerology scs 패킷 헤더 frameid slotid timerfd 로컬 계산 wrap-around modulo"},
   {"title":"재설계 체크리스트","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#checklist","text":"재설계 체크리스트 nic dpu phc 슬롯 앵커링 결정론 측정 검증 tae 튜닝 numa isolation"},
   {"title":"세 개의 시계 (GPU≠CPU 시간)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#clocks","text":"세 시계 gpu cpu phc 시간 동일 다름 free-running drift 절대 시각 globaltimer clock64 oscillator"},
   {"title":"왜 중앙에서 뿌렸나","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#why-central","text":"중앙 배포 시간 모듈 이유 단일 servo 규율 일관성 프레임 틱 에폭 phc2sys 승격"},
