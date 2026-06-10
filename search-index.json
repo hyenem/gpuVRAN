@@ -1,0 +1,52 @@
+[
+  {"title":"홈 · 학습 로드맵","section":"시작","url":"index.html","text":"gpu vran 학습 로드맵 기초 cuda 아키텍처 개요 시작 prerequisite"},
+  {"title":"왜 GPU로 vRAN을 하나","section":"홈","url":"index.html#bigpicture","text":"vran virtualized ran l1 phy 신호처리 병렬 gpu 이유 큰 그림"},
+
+  {"title":"CPU vs GPU","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#cpu-vs-gpu","text":"cpu gpu 차이 latency throughput 처리량 코어 alu 설계 철학 simd"},
+  {"title":"SIMT · Warp · SM","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#simt","text":"simt warp 32 스레드 sm streaming multiprocessor occupancy divergence 분기 발산 스케줄러"},
+  {"title":"메모리 계층","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#memory","text":"메모리 계층 레지스터 shared memory global l1 l2 캐시 coalescing 병합 bank conflict 대역폭"},
+  {"title":"최신 GPU 아키텍처","section":"Part 1 · GPU 아키텍처","url":"gpu-architecture.html#arch","text":"volta ampere hopper ada lovelace grace hopper h100 a100 tensor core gh200 데이터센터"},
+
+  {"title":"시스템 큰 그림","section":"심화 · 데이터 이동","url":"interconnect.html#bigpic","text":"cpu gpu nic pcie 메인보드 vram 시스템 구조 discrete"},
+  {"title":"메모리 공유 여부","section":"심화 · 데이터 이동","url":"interconnect.html#share","text":"메모리 공유 discrete unified memory grace hopper coherent cudamemcpy cudamallocmanaged nvlink-c2c"},
+  {"title":"PCIe · NVLink","section":"심화 · 데이터 이동","url":"interconnect.html#pcie","text":"pcie nvlink 대역폭 인터커넥트 gpu 연결 gen5"},
+  {"title":"DMA · 전송 원리","section":"심화 · 데이터 이동","url":"interconnect.html#transfer","text":"dma direct memory access pinned memory page-locked cudamallochost 비동기 전송 pageable"},
+  {"title":"nvidia-smi · topo","section":"심화 · 데이터 이동","url":"interconnect.html#smi","text":"nvidia-smi topo -m 토폴로지 모니터링 nvlink numa node 연결 그래프 phc"},
+  {"title":"NIC · GPUDirect RDMA","section":"심화 · 데이터 이동","url":"interconnect.html#nic","text":"nic gpudirect rdma roce dpdk bluefield dpu cpu 우회 직접 dma fronthaul ptp 패킷"},
+
+  {"title":"성능 vs 개방성 딜레마","section":"심화 · 데이터 이동","url":"vran-dilemma.html","text":"성능 개방성 딜레마 종속 vendor lock-in 오버헤드 트레이드오프"},
+  {"title":"inline vs lookaside","section":"딜레마","url":"vran-dilemma.html#inline","text":"inline lookaside 가속 데이터 이동 오버헤드 flexran cuphy 왕복 지터"},
+  {"title":"O-RAN AAL","section":"딜레마","url":"vran-dilemma.html#aal","text":"o-ran aal acceleration abstraction layer 추상화 표준 종속 decoupling wg6"},
+  {"title":"DPDK bbdev","section":"딜레마","url":"vran-dilemma.html#bbdev","text":"dpdk bbdev rte_bbdev baseband ldpc fft acc100 lookaside 표준 enqueue dequeue"},
+  {"title":"RDMA 종속의 실체","section":"딜레마","url":"vran-dilemma.html#rdma","text":"rdma roce gpudirect nvidia-peermem 종속 레이어 dma-buf p2pdma 표준 전송"},
+  {"title":"벤더 지형도","section":"딜레마","url":"vran-dilemma.html#vendors","text":"벤더 nvidia intel amd qualcomm marvell ai-ran 종속 지형도 flexran"},
+  {"title":"미래: CXL","section":"딜레마","url":"vran-dilemma.html#cxl","text":"cxl compute express link 캐시 일관성 coherent 개방 표준 메모리 공유 미래 패브릭"},
+  {"title":"의사결정 프레임","section":"딜레마","url":"vran-dilemma.html#decision","text":"의사결정 지연 예산 멀티벤더 ai 병행 전력 선택 프레임"},
+
+  {"title":"실전 사례: 두 진영","section":"심화 · 데이터 이동","url":"case-studies.html","text":"실전 사례 inline lookaside 상용 배포 진영 case study"},
+  {"title":"inline 사례 (GPU)","section":"실전 사례","url":"case-studies.html#inline-cases","text":"softbank aitras t-mobile indosat nokia anyran mavenir aerial arc grace hopper 16 layer mimo bluefield"},
+  {"title":"lookaside 사례","section":"실전 사례","url":"case-studies.html#lookaside-cases","text":"intel acc100 vran boost accelercomm fpga ericsson verizon easic"},
+  {"title":"왜 NVIDIA뿐인가","section":"실전 사례","url":"case-studies.html#why-only-nvidia","text":"amd intel qualcomm gpu 없는 이유 cuphy cuda 종속 rocm instinct arc 수직 통합"},
+
+  {"title":"두 시계 도메인","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#domains","text":"두 시계 도메인 망 시간 처리 시간 phc 슬롯 인덱스 s-plane tai sfn 앵커링"},
+  {"title":"시간 흐름 구조도","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#flow","text":"시간 흐름 구조도 다이어그램 gps ptp phc 분배 제어 rx tx 흐름"},
+  {"title":"PTP · GPS 시간 동기","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#ptp","text":"ptp gps 동기 ieee 1588 g.8275.1 g.8275.2 synce class c boundary clock tae 타이밍 예산 phc ptp4l phc2sys grandmaster"},
+  {"title":"전송 윈도우","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#window","text":"전송 윈도우 ecpri t1a ta3 ta4 dpdk gpudirect 5t for 5g accurate send scheduling flow steering eaxc u-plane c-plane"},
+  {"title":"수신 시간 정렬 처리 (RX)","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#rx","text":"수신 rx 패킷 슬롯 정렬 헤더 eaxc frameid slotid symbol reorder 데드라인 트리거 erasure 소실 nic dpu 역할 분담 persistent kernel cuda graph"},
+  {"title":"시간 배포 구조 변화","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#before-after","text":"시간 배포 before after cpu 시스템 시계 nic phc 진실원 슬롯 타이밍 push pull 브로드캐스트"},
+  {"title":"다른 모듈의 시간 접근","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#time-access","text":"다른 모듈 cpu 시간 접근 phc2sys clock_tai clock_realtime /dev/ptp clock_gettime 직접 간접 도메인"},
+  {"title":"GPU는 슬롯으로 일한다","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#slot","text":"gpu 슬롯 인덱스 절대 시각 sfn 앵커링 도메인 분리 결정적"},
+  {"title":"재설계 체크리스트","section":"PTP & 프론트홀 타이밍","url":"ptp-timing.html#checklist","text":"재설계 체크리스트 nic dpu phc 슬롯 앵커링 결정론 측정 검증 tae 튜닝 numa isolation"},
+
+  {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
+  {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},
+  {"title":"메모리 관리","section":"Part 2 · CUDA","url":"cuda.html#memory-mgmt","text":"메모리 관리 unified memory pinned cudamallochost 에러 체크 cuda_check"},
+  {"title":"스트림 · 비동기","section":"Part 2 · CUDA","url":"cuda.html#streams","text":"cuda stream 스트림 비동기 overlap cudagraph cuda graphs 파이프라인 cudamemcpyasync"},
+  {"title":"성능 최적화","section":"Part 2 · CUDA","url":"cuda.html#optimize","text":"최적화 coalescing shared memory occupancy 타일링 tiling cublas cufft cutlass 행렬 곱 matmul"},
+
+  {"title":"vRAN / O-RAN 기초","section":"Part 3 · GPU vRAN","url":"vran.html#what","text":"vran o-ran ru du cu l1 phy 7.2x split open fronthaul gnb 기지국"},
+  {"title":"왜 GPU인가","section":"Part 3 · GPU vRAN","url":"vran.html#why-gpu","text":"왜 gpu 병렬 서브캐리어 subcarrier mimo 코드블록 inline lookaside ai-ran asic fpga"},
+  {"title":"L1/PHY 가속 블록","section":"Part 3 · GPU vRAN","url":"vran.html#l1","text":"l1 phy fec ldpc polar fft ifft ofdm 채널 추정 등화 mimo 검출 빔포밍 beamforming 변조 qam pusch"},
+  {"title":"NVIDIA Aerial · cuPHY","section":"Part 3 · GPU vRAN","url":"vran.html#aerial","text":"nvidia aerial cuphy cubb cumac grace hopper sionna 인라인 sdk bluefield connectx"},
+  {"title":"실시간 제약","section":"Part 3 · GPU vRAN","url":"vran.html#realtime","text":"실시간 슬롯 harq 타이밍 지터 jitter tail latency cuda graphs persistent kernel gpudirect 결정론"}
+]

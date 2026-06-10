@@ -181,3 +181,32 @@ tr:hover td { background: rgba(255,255,255,.02); }
   .sidebar.open { transform: translateX(0); }
   .content { padding: 70px 22px 80px; }
 }
+
+/* ===== 사이트 검색 ===== */
+.search-box { position: relative; margin: 0 0 22px; }
+.search-box input {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font-size: 0.86rem; font-family: var(--font);
+}
+.search-box input:focus { outline: none; border-color: var(--accent); }
+.search-results {
+  display: none; position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 60;
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px;
+  max-height: 340px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,.55);
+}
+.search-results.open { display: block; }
+.sr-item { display: block; padding: 9px 12px; text-decoration: none; border-bottom: 1px solid var(--border); }
+.sr-item:last-child { border-bottom: none; }
+.sr-item:hover { background: rgba(118,185,0,.12); }
+.sr-title { display: block; color: var(--text); font-size: 0.85rem; font-weight: 600; }
+.sr-sec { display: block; color: var(--text-dim); font-size: 0.74rem; margin-top: 2px; }
+.sr-empty { padding: 12px; color: var(--text-dim); font-size: 0.82rem; }
+
+/* ===== 다이어그램(구조도) ===== */
+.figure {
+  margin: 24px 0; overflow-x: auto; background: var(--bg-elev);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 16px;
+}
+.figure svg { display: block; min-width: 660px; width: 100%; height: auto; }
+.figcap { color: var(--text-dim); font-size: 0.8rem; margin-top: 10px; text-align: center; }

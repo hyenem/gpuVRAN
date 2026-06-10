@@ -14,6 +14,10 @@
   <aside class="sidebar">
     <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
     <p class="tagline">기초부터 5G 가속까지</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 사이트 검색…" autocomplete="off" aria-label="사이트 검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
     <nav class="nav-group">
       <h4>시작</h4>
       <a href="index.html">홈 · 학습 로드맵</a>
@@ -35,6 +39,7 @@
       <a href="case-studies.html">실전 사례: 두 진영</a>
       <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
       <a href="ptp-timing.html#domains" class="sub">두 시계 도메인</a>
+      <a href="ptp-timing.html#flow" class="sub">시간 흐름 구조도</a>
       <a href="ptp-timing.html#ptp" class="sub">PTP · GPS 동기</a>
       <a href="ptp-timing.html#window" class="sub">전송 윈도우</a>
       <a href="ptp-timing.html#rx" class="sub">수신 시간 정렬 처리</a>
@@ -82,6 +87,93 @@
     <div class="callout">
       <div class="title">📐 S-plane이란</div>
       <p>O-RAN 프론트홀은 4개 평면으로 나뉩니다 — <strong>U</strong>(사용자 데이터), <strong>C</strong>(제어), <strong>S</strong>(동기/Sync), <strong>M</strong>(관리). 이 페이지의 1·2절은 <strong>S-plane</strong>(시간 동기)과 U/C-plane의 <strong>전송 타이밍</strong>을 다룹니다.</p>
+    </div>
+
+    <h3 id="flow">시간 흐름 구조도</h3>
+    <p>GPS/PTP에서 출발한 시간이 <strong>NIC PHC(단일 진실원)</strong>로 모인 뒤, 세 갈래 — 제어 평면(SW), 수신(RX), 송신(TX) — 으로 분배되는 전체 그림입니다.</p>
+    <div class="figure">
+      <svg viewBox="0 0 880 580" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#6e7681"/>
+          </marker>
+        </defs>
+        <style>
+          .box{fill:#161b22;stroke:#2d333b;stroke-width:1.2;}
+          .src{fill:#1c2230;stroke:#2d333b;stroke-width:1.2;}
+          .phc{fill:#16210f;stroke:#76b900;stroke-width:2;}
+          .gpu{fill:#0f1b2e;stroke:#58a6ff;stroke-width:1.6;}
+          .note{fill:#11161d;stroke:#2d333b;stroke-width:1;}
+          .t{fill:#e6edf3;font-size:13px;font-family:sans-serif;}
+          .ts{fill:#e6edf3;font-size:12px;font-family:sans-serif;}
+          .dim{fill:#9da7b3;font-size:11px;font-family:sans-serif;}
+          .grn{fill:#76b900;font-size:13px;font-weight:700;font-family:sans-serif;}
+          .blu{fill:#58a6ff;font-size:12px;font-weight:700;font-family:sans-serif;}
+          .gry{fill:#9da7b3;font-size:12px;font-weight:700;font-family:sans-serif;}
+          .ln{stroke:#6e7681;stroke-width:1.4;fill:none;}
+        </style>
+
+        <!-- 소스 -->
+        <rect class="src" x="205" y="16" width="190" height="42" rx="8"/>
+        <text class="ts" x="300" y="42" text-anchor="middle">GPS / GNSS (PPS+ToD)</text>
+        <rect class="src" x="485" y="16" width="190" height="42" rx="8"/>
+        <text class="ts" x="580" y="42" text-anchor="middle">PTP Grandmaster</text>
+        <path class="ln" d="M300,58 L420,104" marker-end="url(#ah)"/>
+        <path class="ln" d="M580,58 L460,104" marker-end="url(#ah)"/>
+
+        <!-- PHC 진실원 -->
+        <rect class="phc" x="290" y="106" width="300" height="54" rx="10"/>
+        <text class="grn" x="440" y="130" text-anchor="middle">NIC PHC — 단일 진실원</text>
+        <text class="dim" x="440" y="148" text-anchor="middle">PTP Hardware Clock (HW로 GPS/PTP에 규율)</text>
+
+        <!-- 분배 라벨 -->
+        <text class="gry" x="140" y="192" text-anchor="middle">제어 평면 (SW)</text>
+        <text class="blu" x="440" y="192" text-anchor="middle">RX 데이터 평면</text>
+        <text class="blu" x="740" y="192" text-anchor="middle">TX 데이터 평면</text>
+
+        <!-- 분기 화살표 -->
+        <path class="ln" d="M380,160 L150,206" marker-end="url(#ah)"/>
+        <path class="ln" d="M440,160 L440,206" marker-end="url(#ah)"/>
+        <path class="ln" d="M500,160 L730,206" marker-end="url(#ah)"/>
+
+        <!-- 좌: 제어 -->
+        <rect class="box" x="30" y="208" width="220" height="48" rx="8"/>
+        <text class="t" x="140" y="230" text-anchor="middle">phc2sys → 시스템시계</text>
+        <text class="dim" x="140" y="247" text-anchor="middle">(CLOCK_TAI / REALTIME)</text>
+        <path class="ln" d="M140,256 L140,286" marker-end="url(#ah)"/>
+        <rect class="box" x="30" y="288" width="220" height="42" rx="8"/>
+        <text class="t" x="140" y="314" text-anchor="middle">CPU 제어 모듈 A·B·C</text>
+        <text class="dim" x="140" y="352" text-anchor="middle">µs 지터 OK · 제어/로그/OAM</text>
+
+        <!-- 중: RX -->
+        <rect class="box" x="320" y="208" width="240" height="40" rx="8"/>
+        <text class="t" x="440" y="233" text-anchor="middle">HW RX 타임스탬프</text>
+        <path class="ln" d="M440,248 L440,266" marker-end="url(#ah)"/>
+        <rect class="box" x="320" y="268" width="240" height="40" rx="8"/>
+        <text class="t" x="440" y="293" text-anchor="middle">슬롯 버퍼 (헤더로 reorder)</text>
+        <path class="ln" d="M440,308 L440,326" marker-end="url(#ah)"/>
+        <rect class="box" x="320" y="328" width="240" height="40" rx="8"/>
+        <text class="t" x="440" y="353" text-anchor="middle">데드라인 트리거 (Ta4)</text>
+        <path class="ln" d="M440,368 L440,386" marker-end="url(#ah)"/>
+        <rect class="gpu" x="320" y="388" width="240" height="48" rx="8"/>
+        <text class="blu" x="440" y="410" text-anchor="middle">GPU — 슬롯 N 처리</text>
+        <text class="dim" x="440" y="427" text-anchor="middle">FFT · 채널추정 · LDPC</text>
+
+        <!-- 우: TX -->
+        <rect class="box" x="630" y="208" width="220" height="48" rx="8"/>
+        <text class="t" x="740" y="230" text-anchor="middle">Accurate Send</text>
+        <text class="dim" x="740" y="247" text-anchor="middle">Scheduling</text>
+        <path class="ln" d="M740,256 L740,286" marker-end="url(#ah)"/>
+        <rect class="box" x="630" y="288" width="220" height="48" rx="8"/>
+        <text class="t" x="740" y="310" text-anchor="middle">TX 정밀 송출</text>
+        <text class="dim" x="740" y="327" text-anchor="middle">(T1a 윈도우)</text>
+
+        <!-- 하단 노트 -->
+        <rect class="note" x="30" y="492" width="820" height="58" rx="10"/>
+        <text class="t" x="440" y="516" text-anchor="middle">GPU는 슬롯 인덱스 공간에서 동작 — 절대 시각을 모른다</text>
+        <text class="dim" x="440" y="536" text-anchor="middle">NIC이 PHC ↔ SFN(슬롯 번호)를 다리로 연결한다</text>
+      </svg>
+      <div class="figcap">그림 — vRAN 시간 흐름: GPS/PTP → NIC PHC(진실원) → 제어(SW)·RX·TX 분배</div>
     </div>
 
     <h2 id="ptp">2. PTP · GPS 시간 동기 (S-plane)</h2>

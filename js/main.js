@@ -36,3 +36,45 @@ document.addEventListener('DOMContentLoaded', () => {
     heads.forEach(h => obs.observe(h));
   }
 });
+
+// ===== 사이트 전체 검색 =====
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('site-search');
+  const box = document.getElementById('search-results');
+  if (!input || !box) return;
+
+  let index = [];
+  fetch('search-index.json').then(r => r.json()).then(d => { index = d; }).catch(() => {});
+
+  const close = () => { box.classList.remove('open'); box.innerHTML = ''; };
+  const render = items => {
+    box.innerHTML = items.length
+      ? items.map(it =>
+          `<a class="sr-item" href="${it.url}"><span class="sr-title">${it.title}</span><span class="sr-sec">${it.section}</span></a>`
+        ).join('')
+      : '<div class="sr-empty">검색 결과 없음</div>';
+    box.classList.add('open');
+  };
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 1) { close(); return; }
+    const toks = q.split(/\s+/);
+    const results = [];
+    for (const it of index) {
+      const hay = (it.title + ' ' + it.section + ' ' + it.text).toLowerCase();
+      if (!toks.every(t => hay.includes(t))) continue;
+      let score = 1;
+      if (it.title.toLowerCase().includes(q)) score += 3;
+      if (it.section.toLowerCase().includes(q)) score += 1;
+      results.push({ it, score });
+    }
+    results.sort((a, b) => b.score - a.score);
+    render(results.slice(0, 8).map(r => r.it));
+  });
+
+  input.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); input.blur(); } });
+  document.addEventListener('click', e => {
+    if (!box.contains(e.target) && e.target !== input) close();
+  });
+});
