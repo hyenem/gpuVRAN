@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심화 · GPU 메모리 공유 & 코어 협력 — GPU vRAN 노트</title>
+<meta name="description" content="GPU 코어(SM)들은 메모리를 공유하는가? global memory 공유 모델과, CP가 설정한 걸 UP가 다른 코어에서 시간 지연 없이 처리할 수 있는 이유를 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
+    <p class="tagline">기초부터 5G 가속까지</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 사이트 검색…" autocomplete="off" aria-label="사이트 검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 1 · GPU 아키텍처</h4>
+      <a href="gpu-architecture.html">개요</a>
+      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
+      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>심화 · 데이터 이동</h4>
+      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
+      <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
+      <a href="case-studies.html">실전 사례: 두 진영</a>
+      <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
+      <a href="realtime.html">실시간 결정론 기법</a>
+      <a href="boundary.html">경계 설계: 버퍼 & 분할</a>
+      <a href="eaxc.html">eAxC ID 매핑</a>
+      <a href="gpu-packet-io.html">GPU 패킷 I/O</a>
+      <a href="gpu-mem-share.html">GPU 메모리 공유 & 코어 협력</a>
+      <a href="gpu-mem-share.html#hierarchy" class="sub">공유 계층</a>
+      <a href="gpu-mem-share.html#vs-cpu" class="sub">CPU와의 차이</a>
+      <a href="gpu-mem-share.html#handoff" class="sub">CP/UP 핸드오프</a>
+      <a href="gpu-mem-share.html#details" class="sub">챙길 디테일</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 2 · CUDA</h4>
+      <a href="cuda.html">개요</a>
+      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
+      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
+      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
+      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
+      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>Part 3 · GPU vRAN</h4>
+      <a href="vran.html">개요</a>
+      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
+      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
+      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
+      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
+      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / 심화 · 데이터 이동 / GPU 메모리 공유</div>
+    <h1>GPU 메모리 공유 & 코어 협력</h1>
+    <p class="lead">"GPU 코어들끼리 메모리를 공유하나? <a href="boundary.html#cu-plane">CP</a>가 설정한 걸 다른 코어가 <a href="boundary.html#cu-plane">UP</a> 받았을 때 시간 지연 없이 처리할 수 있나?" — 핵심은, GPU의 메모리 모델이 CPU와 근본적으로 달라서 <strong>코어 간 핸드오프 문제 자체가 거의 사라진다</strong>는 점입니다.</p>
+
+    <h2 id="hierarchy">1. GPU 메모리 공유 계층 — 어디까지 공유되나</h2>
+    <table>
+      <thead><tr><th>메모리</th><th>공유 범위</th></tr></thead>
+      <tbody>
+        <tr><td><strong>레지스터</strong></td><td>스레드 1개 (private)</td></tr>
+        <tr><td><strong>Shared memory</strong></td><td><strong>블록 안</strong> 스레드끼리 (on-chip, 빠름)</td></tr>
+        <tr><td><strong>L1 캐시</strong></td><td>SM 1개</td></tr>
+        <tr><td><strong>L2 캐시</strong></td><td><strong>모든 SM 공유</strong></td></tr>
+        <tr><td><strong>Global memory (VRAM)</strong></td><td><strong>모든 스레드·SM·블록 공유</strong> ✅</td></tr>
+      </tbody>
+    </table>
+    <p>
+      즉 <strong>global memory에 올려둔 데이터는 어느 코어(SM)에서든 다 보입니다.</strong> CP가 만든 설정(어느 PRB·빔·압축)을 global memory에 써두면, U-plane을 처리하는 어떤 스레드든 그냥 읽습니다 — "다른 코어로 넘겨주는" 복사가 필요 없습니다. (계층 자체는 <a href="gpu-architecture.html#memory">Part 1 메모리 계층</a>과 동일하며, 여기선 "공유 범위" 관점으로 봅니다.)
+    </p>
+
+    <h2 id="vs-cpu">2. CPU와의 결정적 차이</h2>
+    <p>
+      당신의 현재 CPU 설계에선 CP 코어 → UP 코어로 설정이 가려면 <strong>캐시 일관성(coherency) / 락 / 메시지 패싱</strong>을 거칩니다. 캐시라인 바운싱, false sharing, 락 경합 같은 지연이 생기죠.
+    </p>
+    <table>
+      <thead><tr><th></th><th>CPU</th><th>GPU</th></tr></thead>
+      <tbody>
+        <tr><td>코어 간 데이터</td><td>사적 캐시 → 일관성 프로토콜로 동기화</td><td><strong>공유 global memory를 같이 읽음</strong></td></tr>
+        <tr><td>전달 비용</td><td>캐시라인 바운싱·락·false sharing</td><td>공유 메모리 읽기 (전달 개념 약함)</td></tr>
+        <tr><td>멘탈 모델</td><td>"누가 누구에게 넘겨준다"</td><td>"다 같은 메모리를 본다"</td></tr>
+      </tbody>
+    </table>
+    <p>GPU는 코어마다 사적 캐시를 동기화하는 모델이 아니라, <strong>공유 global memory를 수천 스레드가 같이 읽는</strong> 모델입니다. 설정을 한 번 써두면 모두가 봅니다. 그래서 "코어 간 전달 지연"이라는 개념이 약해집니다.</p>
+
+    <h2 id="handoff">3. 그래서 "시간 지연 없이?" — 진짜 변수는 따로 있다</h2>
+    <p>핸드오프가 아니라 <strong>생산자→소비자 순서(ordering)</strong>가 진짜 고려사항입니다:</p>
+    <pre><code>CP 파싱 → 설정을 global memory에 기록  ──(이게 먼저 끝나야)──→  U-plane 커널이 읽음</code></pre>
+    <p>여기서 두 가지가 이걸 "지연 없이"로 만들어 줍니다:</p>
+    <ol>
+      <li><strong>C-plane이 U-plane보다 먼저 도착</strong> (<a href="ptp-timing.html#window">T1a 리드타임</a>) → 설정은 U-plane 처리 시작 <em>전에</em> 이미 준비됨. 의존성이 <strong>파이프라인으로 숨겨져</strong> 크리티컬 패스에 지연을 안 더함.</li>
+      <li><strong>커널 launch가 메모리 배리어</strong> → 이전 단계(CPU나 직전 커널)가 쓴 설정은 다음 커널이 launch될 때 <strong>가시성이 보장</strong>됨. 그래서 U-plane 커널은 별도 동기화 없이 그냥 읽으면 됨.</li>
+    </ol>
+    <div class="callout tip">
+      <div class="title">💡 핵심</div>
+      <p>GPU에선 CP 설정→UP 처리가 <em>코어 간 전달</em>이 아니라 <em>공유 메모리 읽기</em>입니다. CP가 U보다 먼저 와서(T1a) 설정이 미리 준비되고, 커널 launch가 가시성을 보장하므로 — 제대로 설계하면 <strong>크리티컬 패스엔 추가 지연이 없습니다.</strong></p>
+    </div>
+
+    <h2 id="details">4. 챙겨야 할 디테일</h2>
+    <ul>
+      <li><strong>CP가 CPU에서 파싱되면</strong> 설정이 CPU→GPU 경계를 한 번 넘습니다(작은 비용). 단 이건 리드타임 동안 미리 하니 <strong>크리티컬 패스 밖</strong>. CP 파싱도 GPU(<a href="vran.html#aerial">cuMAC</a>류)에서 하면 아예 global memory 안에서 끝나 더 깔끔.</li>
+      <li><strong>설정은 모든 스레드가 같이 읽으므로</strong> → <code>constant memory</code>나 read-only 캐시에 두면 <strong>브로드캐스트 읽기</strong>로 최적화됩니다 (수천 스레드가 같은 값 읽기에 이상적).</li>
+      <li><strong>주의할 케이스</strong> — <em>같은 커널 실행 중에</em> 한 블록이 만든 걸 다른 블록이 읽어야 한다면, 그땐 <code>__threadfence()</code>나 cooperative groups 같은 명시적 동기화가 필요하고 비용이 듭니다. 하지만 CP/UP는 보통 "설정 먼저 완성 → 그다음 커널"이라 이 경우가 아닙니다.</li>
+    </ul>
+
+    <div class="callout tip">
+      <div class="title">✅ 한 줄 정리</div>
+      <p>
+        GPU는 <strong>global memory를 모든 코어가 공유</strong>하므로 CP 설정→UP 처리는 코어 간 전달이 아니라 <strong>공유 메모리 읽기</strong>입니다. CP가 U보다 먼저 와서(T1a) 설정이 미리 준비되고 커널 launch가 가시성을 보장하므로 — 잘 설계하면 추가 지연이 없습니다. <strong>CPU의 캐시 일관성 핸드오프 걱정을 GPU에선 안 해도 됩니다.</strong>
+      </p>
+    </div>
+
+    <div class="pager">
+      <a href="gpu-packet-io.html"><div class="dir">← 이전</div><div class="ttl">GPU 패킷 I/O</div></a>
+      <a class="next" href="eaxc.html#buffer"><div class="dir">관련 →</div><div class="ttl">GPU 버퍼 레이아웃 매핑</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
