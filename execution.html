@@ -244,6 +244,61 @@ kernel&lt;&lt;&lt;b, t&gt;&gt;&gt;();
 <span class="tok-fn">cudaEventSynchronize</span>(stop);    <span class="tok-com">// 끝 깃발까지 대기</span>
 <span class="tok-key">float</span> ms;  <span class="tok-fn">cudaEventElapsedTime</span>(&ms, start, stop);  <span class="tok-com">// 걸린 시간(ms)</span></code></pre>
 
+    <div class="figure">
+      <svg viewBox="0 0 860 330" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="aev" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="#c29bff"/></marker>
+        </defs>
+        <style>
+          .kn{fill:#16210f;stroke:#76b900;stroke-width:1.4}
+          .cp{fill:#14233a;stroke:#58a6ff;stroke-width:1.4}
+          .wt{fill:#1c2230;stroke:#2d333b;stroke-width:1;stroke-dasharray:4 3}
+          .t{fill:#e6edf3;font:12px sans-serif}
+          .ts{fill:#9da7b3;font:10px sans-serif}
+          .g{fill:#76b900;font:11px sans-serif}
+          .b{fill:#58a6ff;font:11px sans-serif}
+          .d{fill:#9da7b3;font:11px sans-serif}
+          .v{fill:#c29bff;font:11px sans-serif;font-weight:700}
+          .lbl{fill:#e6edf3;font:12px sans-serif;font-weight:700}
+          .flag{stroke:#c29bff;stroke-width:2.5}
+          .dep{stroke:#c29bff;stroke-width:1.6;fill:none;stroke-dasharray:6 4}
+          .brace{stroke:#76b900;stroke-width:1.4;fill:none}
+        </style>
+
+        <!-- 용도 1: 시간 측정 -->
+        <text class="t" x="20" y="24" font-weight="700">용도 1 — 시간 측정 (깃발 두 개 사이를 잰다)</text>
+        <text class="lbl" x="20" y="62">스트림</text>
+        <rect class="kn" x="150" y="46" width="280" height="26" rx="4"/><text class="g" x="290" y="63" text-anchor="middle">커널 실행</text>
+        <line class="flag" x1="150" y1="34" x2="150" y2="84"/>
+        <text class="v" x="150" y="100" text-anchor="middle">🚩 start</text>
+        <text class="ts" x="150" y="114" text-anchor="middle">EventRecord</text>
+        <line class="flag" x1="430" y1="34" x2="430" y2="84"/>
+        <text class="v" x="430" y="100" text-anchor="middle">🚩 stop</text>
+        <text class="ts" x="430" y="114" text-anchor="middle">EventRecord</text>
+        <path class="brace" d="M150,126 L150,134 L430,134 L430,126"/>
+        <text class="g" x="290" y="152" text-anchor="middle">ElapsedTime = 이 구간의 GPU 시간 (ms)</text>
+        <text class="d" x="470" y="63">← 깃발은 "스트림 흐름 속 그 지점"에 기록됨</text>
+
+        <line x1="20" y1="172" x2="840" y2="172" stroke="#2d333b" stroke-width="1"/>
+
+        <!-- 용도 2: 스트림 간 의존성 -->
+        <text class="t" x="20" y="198" font-weight="700">용도 2 — 스트림 간 의존성 (B는 A의 깃발까지 기다림)</text>
+        <text class="lbl" x="20" y="236">스트림 A</text>
+        <rect class="cp" x="150" y="220" width="180" height="26" rx="4"/><text class="b" x="240" y="237" text-anchor="middle">복사 (데이터 준비)</text>
+        <line class="flag" x1="332" y1="208" x2="332" y2="258"/>
+        <text class="v" x="332" y="272" text-anchor="middle">🚩 evt</text>
+        <rect class="kn" x="340" y="220" width="160" height="26" rx="4"/><text class="g" x="420" y="237" text-anchor="middle">A의 다음 작업</text>
+        <path class="dep" d="M332,258 C332,292 380,292 418,292" marker-end="url(#aev)"/>
+        <text class="v" x="345" y="316">StreamWaitEvent(B, evt) — "이 깃발 전엔 시작하지 마"</text>
+        <text class="lbl" x="20" y="296">스트림 B</text>
+        <rect class="wt" x="150" y="280" width="270" height="26" rx="4"/><text class="d" x="285" y="297" text-anchor="middle">대기… (깃발 기다림)</text>
+        <rect class="kn" x="422" y="280" width="200" height="26" rx="4"/><text class="g" x="522" y="297" text-anchor="middle">B의 커널 (준비된 데이터 사용)</text>
+        <text class="d" x="640" y="237">← A는 깃발 뒤에도 계속 진행</text>
+        <text class="d" x="640" y="297">← CPU는 양쪽 다 안 기다림(비동기)</text>
+      </svg>
+      <div class="figcap">그림 — 이벤트(🚩깃발)의 두 용도: 깃발 두 개 사이의 GPU 시간을 재거나(위), 다른 스트림이 그 깃발까지 기다리게 해 순서를 보장한다(아래)</div>
+    </div>
+
     <h2 id="dispatch">3.4 블록 → SM 배정 — 일감을 공장에 나눠주기</h2>
     <p>
       앞 단계 ④에서 grid가 펼쳐지면, GPU 안의 <strong>GigaThread 엔진(=일감 배분 담당)</strong>이 블록들을 SM(공장)에 나눠줍니다. 규칙은 단순하지만 중요해요:
