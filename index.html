@@ -3,138 +3,146 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GPU vRAN 학습 노트 — 기초부터 5G 가속까지</title>
-<meta name="description" content="GPU 아키텍처, CUDA 프로그래밍, 그리고 GPU 기반 vRAN(5G L1/PHY) 가속을 기초부터 정리한 학습 사이트">
+<title>GPU·CUDA 노트 — 아키텍처 · 프로그래밍 · 스케줄링</title>
+<meta name="description" content="GPU 아키텍처, CUDA 프로그래밍과 동작 방식, 그리고 스케줄링을 기초부터 깊게 정리한 학습 노트.">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <button class="menu-toggle" aria-label="메뉴">☰</button>
 <div class="layout">
 
-  <!-- 사이드바 -->
   <aside class="sidebar">
-    <a href="index.html" class="brand"><span class="logo">G</span> GPU vRAN 노트</a>
-    <p class="tagline">기초부터 5G 가속까지</p>
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 사이트 검색…" autocomplete="off" aria-label="사이트 검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
-
     <nav class="nav-group">
       <h4>시작</h4>
       <a href="index.html">홈 · 학습 로드맵</a>
     </nav>
     <nav class="nav-group">
-      <h4>Part 1 · GPU 아키텍처</h4>
-      <a href="gpu-architecture.html">개요</a>
-      <a href="gpu-architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
-      <a href="gpu-architecture.html#simt" class="sub">SIMT · Warp · SM</a>
-      <a href="gpu-architecture.html#memory" class="sub">메모리 계층</a>
-      <a href="gpu-architecture.html#arch" class="sub">최신 아키텍처</a>
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
     </nav>
     <nav class="nav-group">
-      <h4>심화 · 데이터 이동</h4>
-      <a href="interconnect.html">CPU·GPU·NIC 연결</a>
-      <a href="interconnect.html#share" class="sub">메모리 공유 여부</a>
-      <a href="interconnect.html#pcie" class="sub">PCIe · NVLink</a>
-      <a href="interconnect.html#smi" class="sub">nvidia-smi · topo</a>
-      <a href="interconnect.html#nic" class="sub">NIC · GPUDirect</a>
-      <a href="vran-dilemma.html">성능 vs 개방성 딜레마</a>
-      <a href="case-studies.html">실전 사례: 두 진영</a>
-      <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
-      <a href="realtime.html">실시간 결정론 기법</a>
-      <a href="boundary.html">경계 설계: 버퍼 & 분할</a>
-      <a href="eaxc.html">eAxC ID 매핑</a>
-      <a href="gpu-packet-io.html">GPU 패킷 I/O</a>
-      <a href="gpu-mem-share.html">GPU 메모리 공유 & 코어 협력</a>
-      <a href="tx-scheduling.html">TX 스케줄링 & GPU 선점</a>
-      <a href="cuda-graphs.html">CUDA Graphs 심화</a>
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
     </nav>
     <nav class="nav-group">
-      <h4>Part 2 · CUDA</h4>
-      <a href="cuda.html">개요</a>
-      <a href="cuda.html#model" class="sub">프로그래밍 모델</a>
-      <a href="cuda.html#first-kernel" class="sub">첫 커널</a>
-      <a href="cuda.html#memory-mgmt" class="sub">메모리 관리</a>
-      <a href="cuda.html#streams" class="sub">스트림 · 비동기</a>
-      <a href="cuda.html#optimize" class="sub">성능 최적화</a>
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
     </nav>
     <nav class="nav-group">
-      <h4>Part 3 · GPU vRAN</h4>
-      <a href="vran.html">개요</a>
-      <a href="vran.html#what" class="sub">vRAN / O-RAN 기초</a>
-      <a href="vran.html#why-gpu" class="sub">왜 GPU인가</a>
-      <a href="vran.html#l1" class="sub">L1/PHY 가속 블록</a>
-      <a href="vran.html#aerial" class="sub">NVIDIA Aerial · cuPHY</a>
-      <a href="vran.html#realtime" class="sub">실시간 제약</a>
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
 
-  <!-- 본문 -->
   <main class="content">
   <div class="content-inner">
 
     <section class="hero">
-      <span class="badge">📡 GPU + 5G · 개인 학습 노트</span>
-      <h1>GPU로 <span class="grad">vRAN</span>을 가속하는 법,<br>기초부터 차근차근.</h1>
-      <p>GPU 아키텍처도, CUDA도 처음이라면 여기서 시작하세요. GPU의 동작 원리 → CUDA 프로그래밍 → 5G 기지국(vRAN) 신호처리 가속까지, 한국어로 정리한 단계별 학습 노트입니다.</p>
+      <span class="badge">⚡ GPU · CUDA 학습 노트</span>
+      <h1>GPU는 어떻게 <span class="grad">실행</span>되는가,<br>기초부터 스케줄링까지.</h1>
+      <p>GPU 아키텍처의 동작 원리 → CUDA로 프로그래밍하는 법 → 커널이 하드웨어에서 실제로 어떻게 스케줄·실행되는지까지, 한국어로 정리한 단계별 학습 노트입니다.</p>
     </section>
 
     <h2 id="roadmap">학습 로드맵</h2>
-    <p>아래 순서대로 따라오시면 됩니다. 각 파트는 앞 파트의 개념 위에 쌓이도록 구성했어요.</p>
+    <p>아래 순서대로 따라오시면 됩니다. "어떻게 생겼나(아키텍처) → 어떻게 짜나(프로그래밍) → 어떻게 도나(실행·스케줄링) → 어떻게 빠르게 하나(최적화)" 흐름입니다.</p>
 
     <div class="card-grid">
-      <a class="card" href="gpu-architecture.html">
-        <div class="num">PART 1</div>
-        <h3>GPU 아키텍처 기초</h3>
-        <p>CPU와 무엇이 다른가? SIMT, warp, SM, 그리고 GPU 성능의 핵심인 메모리 계층을 이해합니다.</p>
+      <a class="card" href="architecture.html">
+        <div class="num">① 아키텍처</div>
+        <h3>GPU 아키텍처</h3>
+        <p>CPU와 무엇이 다른가, SM 내부 구조, SIMT·warp, 메모리 계층, occupancy.</p>
       </a>
-      <a class="card" href="cuda.html">
-        <div class="num">PART 2</div>
+      <a class="card" href="programming.html">
+        <div class="num">② 프로그래밍</div>
         <h3>CUDA 프로그래밍</h3>
-        <p>grid/block/thread 모델, 첫 커널 작성과 실행, 메모리 관리, 스트림, 그리고 최적화 기법.</p>
+        <p>grid/block/thread 모델, 첫 커널 작성, 메모리 관리, 스레드 동기화.</p>
       </a>
-      <a class="card" href="vran.html">
-        <div class="num">PART 3</div>
-        <h3>GPU vRAN 가속</h3>
-        <p>5G L1/PHY를 GPU로 가속하기. LDPC, FFT, 빔포밍과 NVIDIA Aerial(cuPHY) 구조.</p>
+      <a class="card" href="execution.html">
+        <div class="num">③ 실행 모델</div>
+        <h3>CUDA 동작 방식</h3>
+        <p>커널 launch가 실제로 어떻게 도나, 비동기·스트림·이벤트, 블록의 SM 배정.</p>
+      </a>
+      <a class="card" href="scheduling.html">
+        <div class="num">④ 스케줄링</div>
+        <h3>스케줄링</h3>
+        <p>warp 스케줄러, occupancy 튜닝, 스트림 우선순위, 선점, MIG·MPS.</p>
+      </a>
+      <a class="card" href="graphs.html">
+        <div class="num">⑤ 그래프</div>
+        <h3>CUDA Graphs</h3>
+        <p>반복 워크로드를 그래프로 캡처해 launch 오버헤드·지터를 없애기.</p>
+      </a>
+      <a class="card" href="optimization.html">
+        <div class="num">⑥ 최적화</div>
+        <h3>성능 최적화</h3>
+        <p>메모리 병합, shared memory 타일링, bank conflict, 프로파일링.</p>
       </a>
     </div>
 
-    <h2 id="bigpicture">큰 그림: 왜 GPU로 vRAN을 하나?</h2>
+    <h2 id="bigpicture">큰 그림: GPU는 "처리량 기계"다</h2>
     <p>
-      <strong>vRAN(virtualized RAN)</strong>은 기존에 전용 하드웨어(ASIC, FPGA)로 처리하던 무선 기지국의
-      신호처리를 <strong>일반 서버 + 소프트웨어</strong>로 옮기는 흐름입니다. 문제는 5G의 물리계층(L1/PHY)이
-      어마어마한 연산량을 요구한다는 것 — 수십~수백 μs 안에 LDPC 디코딩, FFT, 채널 추정, 빔포밍을 끝내야 합니다.
+      CPU는 한 작업을 최대한 빨리 끝내도록(지연 최적화), GPU는 <strong>같은 연산을 수천 데이터에 동시에</strong> 적용하도록(처리량 최적화) 설계됐습니다. 이 한 문장이 GPU의 모든 것 — 왜 코어가 수천 개인지, 왜 메모리 접근이 병목인지, 왜 warp로 묶어 실행하는지 — 을 설명합니다.
     </p>
     <p>
-      CPU만으로는 이 병렬 연산을 실시간으로 감당하기 어렵습니다. 반면 <strong>GPU는 수천 개의 코어로
-      대규모 병렬 연산</strong>을 처리하도록 설계되어 있어, 이런 신호처리에 자연스럽게 들어맞습니다.
-      그래서 NVIDIA Aerial 같은 플랫폼이 등장했고, 이걸 이해하려면 GPU 아키텍처와 CUDA를 먼저 알아야 합니다.
+      이 노트는 그 동작 원리를 <strong>하드웨어(아키텍처) → 소프트웨어(CUDA) → 실행/스케줄링</strong> 순으로 연결해, "코드를 짜면 GPU 안에서 실제로 무슨 일이 벌어지는가"를 이해하는 데 목표를 둡니다.
     </p>
 
     <div class="callout tip">
       <div class="title">💡 학습 팁</div>
-      <p>처음에는 모든 용어를 외우려 하지 마세요. Part 1에서 "GPU는 왜 빠른가"의 직관만 잡고, Part 2에서 직접 코드를 손으로 따라 쓰고, Part 3에서 "이게 vRAN에 어떻게 쓰이나"를 연결하면 자연스럽게 흡수됩니다.</p>
+      <p>①에서 "GPU는 왜 빠른가"의 직관을 잡고, ②에서 직접 커널을 손으로 써보고, ③④에서 "그 커널이 어떻게 스케줄되는가"를 연결하면, ⑥의 최적화 기법들이 왜 효과가 있는지 자연스럽게 이해됩니다.</p>
     </div>
 
-    <h2 id="prereq">필요한 배경 지식</h2>
-    <ul>
-      <li><strong>C/C++ 기초</strong> — CUDA는 C++ 확장이라 포인터, 배열, 함수 개념이 필요합니다.</li>
-      <li><strong>선형대수 약간</strong> — 행렬·벡터 연산이 신호처리 전반에 등장합니다. (몰라도 진행 가능)</li>
-      <li><strong>무선통신 기초는 선택</strong> — Part 3에서 필요한 만큼 그때그때 설명합니다.</li>
-    </ul>
-
     <div class="callout">
-      <div class="title">📂 이 사이트에 대해</div>
-      <p>이 문서는 개인 학습용으로 정리한 노트입니다. 정확성을 위해 실제 개발 시에는 <a href="https://docs.nvidia.com/cuda/" target="_blank" rel="noopener">CUDA 공식 문서</a>와 <a href="https://docs.nvidia.com/aerial/" target="_blank" rel="noopener">NVIDIA Aerial 문서</a>를 함께 참고하세요.</p>
+      <div class="title">📂 필요한 배경</div>
+      <p><strong>C/C++ 기초</strong>(포인터·배열·함수)면 충분합니다. GPU가 없어도 <a href="https://colab.research.google.com" target="_blank" rel="noopener">Google Colab</a> 무료 GPU 런타임에서 <code>nvcc</code>로 바로 컴파일·실행할 수 있어요. 정확성은 <a href="https://docs.nvidia.com/cuda/" target="_blank" rel="noopener">CUDA 공식 문서</a>를 함께 참고하세요.</p>
     </div>
 
     <div class="pager">
       <span></span>
-      <a class="next" href="gpu-architecture.html">
+      <a class="next" href="architecture.html">
         <div class="dir">다음 →</div>
-        <div class="ttl">Part 1 · GPU 아키텍처 기초</div>
+        <div class="ttl">① GPU 아키텍처</div>
       </a>
     </div>
 

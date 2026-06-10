@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>② CUDA 프로그래밍 — GPU·CUDA 노트</title>
+<meta name="description" content="CUDA 프로그래밍 모델, 첫 커널, 메모리 관리, 스레드 동기화를 예제와 함께 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ② CUDA 프로그래밍</div>
+    <h1>② CUDA 프로그래밍</h1>
+    <p class="lead"><a href="architecture.html">①의 하드웨어 개념</a>을 실제 코드로 다룹니다. CUDA는 C++ 확장이며, 핵심은 "어떤 데이터를 어떤 스레드가 처리할지" 매핑하는 일입니다.</p>
+
+    <h2 id="model">2.1 프로그래밍 모델 — Grid / Block / Thread</h2>
+    <p>병렬 작업은 3단 계층으로 조직됩니다. 이 구조가 <a href="architecture.html#sm">①의 하드웨어(SM, warp)</a>에 그대로 매핑됩니다.</p>
+    <ul>
+      <li><strong>Thread</strong> — 가장 작은 실행 단위. 보통 데이터 원소 하나 처리.</li>
+      <li><strong>Block</strong> — 스레드 묶음. 같은 블록끼리 <strong>shared memory 공유 + 동기화</strong> 가능. 한 SM에서 실행.</li>
+      <li><strong>Grid</strong> — 블록의 묶음. 커널 하나 = grid 전체.</li>
+    </ul>
+    <pre><code><span class="tok-com">// 각 스레드가 자신의 전역 인덱스를 계산하는 공식</span>
+<span class="tok-type">int</span> idx = blockIdx.x * blockDim.x + threadIdx.x;
+<span class="tok-com">//        ↑ 몇 번째 블록   ↑ 블록 크기   ↑ 블록 내 위치</span></code></pre>
+    <div class="callout">
+      <div class="title">🧩 핵심 사고법</div>
+      <p>CUDA 프로그래밍 = "내가 처리할 배열 인덱스를, 내 스레드 좌표(blockIdx, threadIdx)로부터 어떻게 계산할까?"를 정하는 일. 나머지는 평범한 C++입니다.</p>
+    </div>
+
+    <h2 id="kernel">2.2 첫 커널 — 벡터 덧셈</h2>
+    <pre><code><span class="tok-com">// CPU: 루프로 하나씩</span>
+<span class="tok-key">void</span> <span class="tok-fn">vecAdd_cpu</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> i = <span class="tok-num">0</span>; i &lt; n; i++) C[i] = A[i] + B[i];
+}
+
+<span class="tok-com">// GPU: 각 스레드가 원소 하나 담당 (루프가 사라짐)</span>
+<span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">vecAdd</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
+    <span class="tok-key">int</span> i = blockIdx.x * blockDim.x + threadIdx.x;
+    <span class="tok-key">if</span> (i &lt; n) C[i] = A[i] + B[i];   <span class="tok-com">// 범위 보호</span>
+}</code></pre>
+    <p><code>__global__</code>은 "GPU에서 실행, CPU에서 호출되는 함수(=커널)" 표시입니다. 루프 대신 <strong>수천 스레드가 각자 한 원소씩</strong> 동시에 처리합니다.</p>
+    <h3>호스트(CPU) 쪽 실행</h3>
+    <pre><code><span class="tok-key">int</span> n = <span class="tok-num">1</span>&lt;&lt;<span class="tok-num">20</span>;  size_t bytes = n*<span class="tok-key">sizeof</span>(<span class="tok-key">float</span>);
+<span class="tok-key">float</span> *dA,*dB,*dC;
+<span class="tok-fn">cudaMalloc</span>(&dA, bytes); <span class="tok-fn">cudaMalloc</span>(&dB, bytes); <span class="tok-fn">cudaMalloc</span>(&dC, bytes);
+<span class="tok-fn">cudaMemcpy</span>(dA, hA, bytes, cudaMemcpyHostToDevice);   <span class="tok-com">// CPU→GPU 복사</span>
+<span class="tok-fn">cudaMemcpy</span>(dB, hB, bytes, cudaMemcpyHostToDevice);
+
+<span class="tok-key">int</span> threads = <span class="tok-num">256</span>;                            <span class="tok-com">// 블록당 스레드 (보통 128~512)</span>
+<span class="tok-key">int</span> blocks  = (n + threads - <span class="tok-num">1</span>) / threads; <span class="tok-com">// 올림 나눗셈</span>
+<span class="tok-fn">vecAdd</span>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(dA, dB, dC, n);   <span class="tok-com">// ← 커널 실행!</span>
+
+<span class="tok-fn">cudaMemcpy</span>(hC, dC, bytes, cudaMemcpyDeviceToHost); <span class="tok-com">// 결과 회수</span>
+<span class="tok-fn">cudaFree</span>(dA); <span class="tok-fn">cudaFree</span>(dB); <span class="tok-fn">cudaFree</span>(dC);</code></pre>
+    <p><code>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;</code>가 CUDA 특유의 <strong>실행 구성(launch configuration)</strong> 문법입니다. 이 실행이 실제로 어떻게 도는지는 <a href="execution.html">③ 실행 모델</a>에서 깊게 봅니다.</p>
+
+    <h2 id="memory">2.3 메모리 관리</h2>
+    <h3>전통 방식 — 명시적 복사</h3>
+    <p>위처럼 <code>cudaMalloc</code> + <code>cudaMemcpy</code>로 host↔device를 명시적으로 복사합니다.</p>
+    <h3>Unified Memory</h3>
+    <pre><code><span class="tok-key">float</span> *A;
+<span class="tok-fn">cudaMallocManaged</span>(&A, bytes);  <span class="tok-com">// CPU/GPU가 같은 포인터, 시스템이 자동 이동</span></code></pre>
+    <div class="callout tip">
+      <div class="title">💡 Pinned Memory</div>
+      <p><code>cudaMallocHost</code>로 할당한 <strong>pinned(page-locked) memory</strong>는 전송이 빠르고 <strong>비동기 복사</strong>가 가능합니다. 스트림 overlap(<a href="execution.html#async">③</a>)의 전제 조건입니다.</p>
+    </div>
+    <h3>에러 체크는 습관처럼</h3>
+    <pre><code><span class="tok-pp">#define</span> <span class="tok-fn">CUDA_CHECK</span>(call) do { cudaError_t e=(call); \
+  <span class="tok-key">if</span>(e!=cudaSuccess){ <span class="tok-fn">fprintf</span>(stderr,<span class="tok-str">"%s:%d %s\n"</span>,__FILE__,__LINE__,<span class="tok-fn">cudaGetErrorString</span>(e)); <span class="tok-fn">exit</span>(<span class="tok-num">1</span>);} \
+} <span class="tok-key">while</span>(<span class="tok-num">0</span>)
+<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaMalloc</span>(&dA, bytes));</code></pre>
+
+    <h2 id="sync">2.4 동기화 — 블록 안에서의 협력</h2>
+    <p>같은 블록의 스레드들은 협력할 수 있습니다 (다른 블록끼리는 커널 안에서 직접 동기화 불가).</p>
+    <ul>
+      <li><strong><code>__syncthreads()</code></strong> — 블록 내 모든 스레드가 이 지점에 도달할 때까지 대기 (배리어). shared memory를 함께 쓸 때 필수.</li>
+      <li><strong>아토믹 연산</strong> — <code>atomicAdd</code> 등으로 여러 스레드가 같은 주소를 안전하게 갱신 (경쟁 조건 방지). 단 경합 시 직렬화되니 남용 금지.</li>
+    </ul>
+    <pre><code><span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tile[<span class="tok-num">256</span>];
+tile[threadIdx.x] = A[idx];     <span class="tok-com">// 각자 shared에 적재</span>
+<span class="tok-fn">__syncthreads</span>();              <span class="tok-com">// 모두 적재 끝날 때까지 대기</span>
+<span class="tok-com">// 이제 tile을 안전하게 함께 사용</span></code></pre>
+    <div class="callout warn">
+      <div class="title">⚠️ 경쟁 조건(race)</div>
+      <p>여러 스레드가 동기화 없이 같은 메모리를 읽고 쓰면 결과가 비결정적입니다. shared memory 공유 패턴엔 <code>__syncthreads()</code>를, 누적엔 아토믹 또는 reduction 패턴을 쓰세요.</p>
+    </div>
+
+    <div class="callout tip">
+      <div class="title">✅ ② 정리</div>
+      <p>커널은 <code>__global__</code>, 인덱스는 <code>blockIdx*blockDim+threadIdx</code>. <code>cudaMalloc/Memcpy</code>로 메모리 관리, 블록 내 협력은 <code>__syncthreads()</code>·아토믹. 다음은 "이 커널이 실제로 어떻게 실행되는가"입니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="architecture.html"><div class="dir">← 이전</div><div class="ttl">① GPU 아키텍처</div></a>
+      <a class="next" href="execution.html"><div class="dir">다음 →</div><div class="ttl">③ CUDA 동작 방식</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>

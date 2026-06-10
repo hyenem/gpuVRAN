@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>③ CUDA 동작 방식 (실행 모델) — GPU·CUDA 노트</title>
+<meta name="description" content="커널 launch가 실제로 어떻게 도나, 비동기·스트림, 이벤트, 블록이 SM에 배정되는 과정을 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ③ 실행 모델</div>
+    <h1>③ CUDA 동작 방식 — 실행 모델</h1>
+    <p class="lead">"<code>kernel&lt;&lt;&lt;...&gt;&gt;&gt;()</code>를 호출하면 실제로 무슨 일이 벌어지나?" — host에서 명령이 GPU로 흘러가 블록이 SM에 배정되기까지의 전 과정을 따라갑니다.</p>
+
+    <h2 id="launch">3.1 커널 launch의 실체</h2>
+    <p>
+      <code>kernel&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;()</code> 한 줄이 실행되면 내부에서 이런 일이 일어납니다:
+    </p>
+    <pre><code>① CPU(호스트): 런타임/드라이버에 "이 커널을 이 구성으로 실행" 요청 작성
+② 드라이버:   명령을 GPU의 하드웨어 큐에 enqueue (이 작업 자체가 ~µs 오버헤드)
+③ CPU:        기다리지 않고 다음 줄로 진행 (비동기!)
+④ GPU:        큐에서 커널을 꺼내 grid를 펼침
+              → GigaThread 엔진이 블록들을 SM들에 분배
+⑤ 각 SM:      배정된 블록의 warp를 스케줄해 실행</code></pre>
+    <div class="callout warn">
+      <div class="title">⚠️ 커널 실행은 비동기다</div>
+      <p>CPU는 GPU 완료를 <strong>기다리지 않습니다</strong> — enqueue만 하고 다음 줄로 갑니다. 결과가 필요하면 <code>cudaMemcpy</code>(자동 동기) 또는 <code>cudaDeviceSynchronize()</code>로 기다려야 합니다. 이 비동기성이 성능의 무기(overlap)이자 버그의 원천(동기화 누락)입니다.</p>
+    </div>
+    <p>그리고 ②의 <strong>launch 오버헤드(~µs)</strong>가 작은 커널을 많이 띄울 때 병목이 됩니다 — 이걸 없애는 게 <a href="graphs.html">⑤ CUDA Graphs</a>입니다.</p>
+
+    <h2 id="async">3.2 비동기 · 스트림</h2>
+    <p>
+      <strong>CUDA 스트림</strong>은 GPU 작업의 "작업 큐"입니다. 같은 스트림 안의 작업은 순서대로, <strong>다른 스트림끼리는 병렬</strong>로 실행됩니다. 이를 이용해 "데이터 전송"과 "연산"을 겹쳐(overlap) 숨깁니다.
+    </p>
+    <pre><code>cudaStream_t s1, s2;
+<span class="tok-fn">cudaStreamCreate</span>(&s1); <span class="tok-fn">cudaStreamCreate</span>(&s2);
+
+<span class="tok-com">// 청크 0은 s1, 청크 1은 s2 → 전송과 연산이 겹쳐 돌아감</span>
+<span class="tok-fn">cudaMemcpyAsync</span>(dA0, hA0, sz, H2D, s1);
+<span class="tok-fn">kernel</span>&lt;&lt;&lt;b,t,<span class="tok-num">0</span>,s1&gt;&gt;&gt;(dA0);
+<span class="tok-fn">cudaMemcpyAsync</span>(dA1, hA1, sz, H2D, s2);
+<span class="tok-fn">kernel</span>&lt;&lt;&lt;b,t,<span class="tok-num">0</span>,s2&gt;&gt;&gt;(dA1);</code></pre>
+    <pre><code><span class="tok-com">// overlap 효과 (개념)</span>
+스트림1:  [복사0][커널0]
+스트림2:        [복사1][커널1]   ← 복사1이 커널0과 겹침 → 총 시간↓</code></pre>
+    <p>비동기 복사를 하려면 호스트 메모리가 <a href="programming.html#memory">pinned</a>여야 합니다.</p>
+
+    <h2 id="events">3.3 이벤트 · 동기화</h2>
+    <p>스트림 사이 조율과 시간 측정엔 <strong>이벤트(event)</strong>를 씁니다.</p>
+    <ul>
+      <li><strong>시간 측정</strong> — <code>cudaEventRecord</code> 두 개 사이의 GPU 시간 측정(<code>cudaEventElapsedTime</code>). CPU 타이머보다 정확.</li>
+      <li><strong>스트림 간 의존성</strong> — <code>cudaStreamWaitEvent</code>로 "스트림 B는 스트림 A의 이 지점까지 기다려라".</li>
+      <li><strong>전체 동기화</strong> — <code>cudaDeviceSynchronize()</code>(모든 작업), <code>cudaStreamSynchronize(s)</code>(한 스트림).</li>
+    </ul>
+    <pre><code>cudaEvent_t start, stop;
+<span class="tok-fn">cudaEventCreate</span>(&start); <span class="tok-fn">cudaEventCreate</span>(&stop);
+<span class="tok-fn">cudaEventRecord</span>(start);
+kernel&lt;&lt;&lt;b,t&gt;&gt;&gt;();
+<span class="tok-fn">cudaEventRecord</span>(stop);
+<span class="tok-fn">cudaEventSynchronize</span>(stop);
+<span class="tok-key">float</span> ms; <span class="tok-fn">cudaEventElapsedTime</span>(&ms, start, stop);</code></pre>
+
+    <h2 id="dispatch">3.4 블록 → SM 배정</h2>
+    <p>
+      grid가 펼쳐지면 <strong>GigaThread 엔진(블록 스케줄러)</strong>이 블록들을 SM에 분배합니다. 규칙:
+    </p>
+    <ul>
+      <li><strong>블록은 한 SM에만</strong> 배정 (절대 SM 사이로 쪼개지지 않음).</li>
+      <li><strong>SM 하나는 여러 블록을 동시 거주(resident)</strong> — <a href="architecture.html#occupancy">자원(레지스터·shared·warp 슬롯)</a>이 허락하는 만큼.</li>
+      <li>블록이 끝나 자원이 풀리면 <strong>대기 중인 다음 블록</strong>이 그 SM에 올라감.</li>
+    </ul>
+    <pre><code>Grid: [B0][B1][B2][B3][B4][B5][B6][B7]...   (블록이 많음)
+         │   │   │   │
+        SM0 SM1 SM0 SM1   ← 자원 되는 대로 배정, 끝나면 다음 블록
+</code></pre>
+    <div class="callout">
+      <div class="title">🧠 함의</div>
+      <p>블록은 <strong>독립적</strong>이어야 합니다 — 어느 SM에, 어떤 순서로 배정될지 보장이 없으니까요. 그래서 블록 간 직접 동기화가 (커널 안에선) 안 되고, 블록끼리 협력하려면 커널을 나누거나 grid sync(cooperative groups)를 써야 합니다. 이 배정·실행이 실제로 어떻게 스케줄되는지는 <a href="scheduling.html">④ 스케줄링</a>에서 이어집니다.</p>
+    </div>
+
+    <div class="callout tip">
+      <div class="title">✅ ③ 정리</div>
+      <p>커널 launch는 <strong>비동기 enqueue</strong>(~µs 오버헤드) → GPU가 grid를 펼침 → GigaThread가 블록을 SM에 분배 → SM이 warp를 실행. 스트림으로 작업을 겹치고, 이벤트로 조율·측정합니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="programming.html"><div class="dir">← 이전</div><div class="ttl">② CUDA 프로그래밍</div></a>
+      <a class="next" href="scheduling.html"><div class="dir">다음 →</div><div class="ttl">④ 스케줄링</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>

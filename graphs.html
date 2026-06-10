@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⑤ CUDA Graphs — GPU·CUDA 노트</title>
+<meta name="description" content="CUDA Graphs 동작 원리 — 3단계, stream capture, 그래프 업데이트, conditional node, device graph launch.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ⑤ CUDA Graphs</div>
+    <h1>⑤ CUDA Graphs</h1>
+    <p class="lead">한 줄 요약 — <strong>반복되는 GPU 작업 시퀀스를 "그래프"로 한 번 캡처해, 매번 통째로 launch</strong>해서 <a href="execution.html#launch">launch 오버헤드</a>와 지터를 없애는 기술입니다.</p>
+
+    <h2 id="why">5.1 왜 그래프인가 — launch 오버헤드</h2>
+    <p>
+      커널을 하나 launch할 때마다 <strong>CPU 쪽 오버헤드(드라이버 처리, ~µs)</strong>가 듭니다. <strong>작은 커널 수십 개를 반복</strong>하면 이 비용이 쌓여 — 연산보다 launch가 병목이 되고, 커널 사이 간격과 <strong>지터</strong>가 생깁니다.
+    </p>
+    <pre><code><span class="tok-com">// 매번 N번 launch → N번의 CPU 오버헤드 + 지터</span>
+a&lt;&lt;&lt;...&gt;&gt;&gt;(); b&lt;&lt;&lt;...&gt;&gt;&gt;(); c&lt;&lt;&lt;...&gt;&gt;&gt;(); d&lt;&lt;&lt;...&gt;&gt;&gt;();
+
+<span class="tok-com">// 그래프: 한 번 캡처, 매번 한 방에</span>
+<span class="tok-fn">cudaGraphLaunch</span>(graphExec, stream);   <span class="tok-com">// 1번 launch로 전체 시퀀스</span></code></pre>
+    <div class="callout tip">
+      <div class="title">💡 얻는 것 3가지</div>
+      <ul>
+        <li><strong>launch 비용 분할상환</strong> — N번 → 1번</li>
+        <li><strong>CPU 해방·지터↓</strong> — CPU는 한 번 던지고, GPU가 자율 실행</li>
+        <li><strong>드라이버 최적화</strong> — 전체 워크플로를 미리 알기에 커널 간 간격을 더 잘 짬</li>
+      </ul>
+    </div>
+
+    <h2 id="stages">5.2 3단계 동작 — 정의 → 인스턴스화 → 실행</h2>
+    <p>비싼 셋업은 <em>한 번만</em>, 실행은 <em>싸게 반복</em>이 핵심입니다.</p>
+    <table>
+      <thead><tr><th>단계</th><th>무엇</th><th>비용</th></tr></thead>
+      <tbody>
+        <tr><td><strong>① 정의</strong></td><td>노드(작업)+의존성(DAG) 구성 → <code>cudaGraph_t</code></td><td>1회</td></tr>
+        <tr><td><strong>② 인스턴스화</strong></td><td>실행 객체로 컴파일(검증·최적화) → <code>cudaGraphExec_t</code></td><td>1회 (비쌈)</td></tr>
+        <tr><td><strong>③ 실행</strong></td><td><code>cudaGraphLaunch</code>로 반복 재생</td><td><strong>매번 (쌈)</strong></td></tr>
+      </tbody>
+    </table>
+    <p>그래프 = <strong>노드 + 엣지의 DAG</strong>. 노드 종류: 커널, memcpy, memset, host 함수, child graph, event, conditional 등.</p>
+
+    <h2 id="build">5.3 만드는 법 — Stream Capture vs Explicit API</h2>
+    <h3>① Stream Capture (가장 쉬움)</h3>
+    <pre><code><span class="tok-fn">cudaStreamBeginCapture</span>(stream, cudaStreamCaptureModeGlobal);
+a&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 이 블록의 작업들이 실행되지 않고</span>
+b&lt;&lt;&lt;...,stream&gt;&gt;&gt;();          <span class="tok-com">// 그래프에 "기록"됨 (의존성은 스트림에서 추론)</span>
+<span class="tok-fn">cudaStreamEndCapture</span>(stream, &graph);</code></pre>
+    <h3>② Explicit API (정밀 제어)</h3>
+    <pre><code><span class="tok-fn">cudaGraphCreate</span>(&graph, 0);
+<span class="tok-fn">cudaGraphAddKernelNode</span>(&nA, graph, NULL, 0, &pA);
+<span class="tok-fn">cudaGraphAddKernelNode</span>(&nB, graph, &nA, 1, &pB);  <span class="tok-com">// nA에 의존</span></code></pre>
+
+    <h2 id="update">5.4 업데이트 — 구조는 그대로, 파라미터만</h2>
+    <p>데이터 포인터·크기만 바뀌고 <strong>구조(위상)는 같다</strong>면, 재빌드 없이 파라미터만 갱신합니다.</p>
+    <pre><code>빌드 + 인스턴스화 (1회)
+ └─ 반복: cudaGraphExecKernelNodeSetParams(...) → cudaGraphLaunch(...)</code></pre>
+    <ul>
+      <li><strong>노드 단위</strong> — <code>cudaGraphExecKernelNodeSetParams</code> 등으로 특정 노드만</li>
+      <li><strong>전체 그래프</strong> — <code>cudaGraphExecUpdate</code> (위상 동일한 새 그래프로 일괄)</li>
+    </ul>
+    <div class="callout">
+      <div class="title">📌 성질</div>
+      <p>업데이트는 <strong>다음 launch부터 적용</strong>되고 진행 중 launch엔 영향 없음. 단 <strong>위상은 동일</strong>해야 함 — 노드 추가/삭제는 재빌드 필요.</p>
+    </div>
+
+    <h2 id="advanced">5.5 고급 — Conditional Node & Device Graph Launch</h2>
+    <h3>Conditional Nodes (CUDA 12.3+)</h3>
+    <p>그래프 구조 고정이라 <strong>동적 제어 흐름</strong>이 약점이었는데, <strong>conditional node</strong>(IF/WHILE 컨테이너)가 풉니다. body graph가 <strong>조건 변수</strong>에 따라 실행됩니다.</p>
+    <ul>
+      <li>커널에서 <code>cudaGraphSetConditional</code>로 조건 값 설정</li>
+      <li><strong>IF</strong>: 조건≠0이면 body 1회 / <strong>WHILE</strong>: 참인 동안 반복 (가변 반복 알고리즘에 유용)</li>
+    </ul>
+    <h3>Device Graph Launch (CUDA 12+)</h3>
+    <p><strong>GPU 커널이 직접 다른 그래프를 launch</strong> — CPU를 안 거치고요. GPU 코드가 다음에 어떤 그래프를 돌릴지 동적으로 정해, CPU↔GPU 왕복을 없애는 계층적 실행이 가능합니다.</p>
+
+    <div class="callout warn">
+      <div class="title">⚠️ 함정</div>
+      <ul>
+        <li><strong>빌드·인스턴스화 비용</strong> — <em>한 번만</em> 하라. 매 반복 재빌드하면 손해.</li>
+        <li><strong>구조 고정</strong> — 위상 변경은 재빌드. 동적 분기는 conditional node로 일부만.</li>
+        <li><strong>캡처 중 일부 동기 API 금지</strong> — capture 모드 제약 주의.</li>
+      </ul>
+    </div>
+
+    <div class="callout tip">
+      <div class="title">✅ ⑤ 정리</div>
+      <p>CUDA Graphs = <strong>정의→인스턴스화(1회)→실행(반복)</strong>. 반복 커널 시퀀스를 한 번 캡처해 <strong>파라미터만 갱신하며 통째로 launch</strong> → launch 오버헤드·지터 제거. conditional node(동적 흐름)·device launch(CPU 우회)로 확장.</p>
+    </div>
+
+    <h2 id="sources">참고 자료</h2>
+    <ul>
+      <li><a href="https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html" target="_blank" rel="noopener">CUDA Programming Guide — CUDA Graphs</a></li>
+      <li><a href="https://developer.nvidia.com/blog/dynamic-control-flow-in-cuda-graphs-with-conditional-nodes/" target="_blank" rel="noopener">NVIDIA — Conditional Nodes</a></li>
+      <li><a href="https://developer.nvidia.com/blog/constructing-cuda-graphs-with-dynamic-parameters/" target="_blank" rel="noopener">NVIDIA — Dynamic Parameters</a></li>
+    </ul>
+
+    <div class="pager">
+      <a href="scheduling.html"><div class="dir">← 이전</div><div class="ttl">④ 스케줄링</div></a>
+      <a class="next" href="optimization.html"><div class="dir">다음 →</div><div class="ttl">⑥ 성능 최적화</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>

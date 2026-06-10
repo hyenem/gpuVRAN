@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>④ 스케줄링 — GPU·CUDA 노트</title>
+<meta name="description" content="warp 스케줄링, occupancy 튜닝, 스트림 우선순위, GPU 선점(preemption), MIG·MPS를 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ④ 스케줄링</div>
+    <h1>④ 스케줄링</h1>
+    <p class="lead">블록이 <a href="execution.html#dispatch">SM에 배정된 뒤</a>, 그 안에서 warp가 어떻게 골라 실행되는가 — 그리고 여러 커널이 GPU를 두고 어떻게 경쟁하는가. 성능과 응답성의 핵심입니다.</p>
+
+    <h2 id="warp">4.1 Warp 스케줄링 — latency hiding</h2>
+    <p>
+      SM의 <strong>warp 스케줄러</strong>(보통 4개/SM)는 매 사이클 <strong>"실행 준비된(ready) warp"</strong>를 골라 명령을 냅니다. 한 warp가 global memory를 기다리며 멈추면(수백 사이클), 즉시 다른 warp로 <strong>0-오버헤드 전환</strong>합니다.
+    </p>
+    <pre><code>warp A: 메모리 대기 ──┐
+warp B: 실행          │  A가 멈춘 동안 B·C·D 실행 → ALU 안 놀림
+warp C: 실행          │  (= latency hiding)
+warp D: 실행 ─────────┘</code></pre>
+    <p>
+      CPU는 캐시로 지연을 <em>줄이고</em>, GPU는 <strong>많은 warp로 지연을 가립니다</strong>. 그래서 SM에 ready warp가 충분해야 ALU가 꽉 찹니다 — 이게 다음의 occupancy 이야기입니다.
+    </p>
+
+    <h2 id="occupancy">4.2 Occupancy 튜닝</h2>
+    <p><a href="architecture.html#occupancy">①에서 본</a> occupancy를 실제로 어떻게 올리나:</p>
+    <table>
+      <thead><tr><th>제약</th><th>올리는 법</th></tr></thead>
+      <tbody>
+        <tr><td>레지스터/스레드 과다</td><td>변수 줄이기, <code>__launch_bounds__</code>로 레지스터 상한 힌트</td></tr>
+        <tr><td>shared memory/블록 과다</td><td>타일 크기·버퍼 축소</td></tr>
+        <tr><td>블록 크기 부적절</td><td>128~256 스레드 등으로 조정 (occupancy calculator 활용)</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <div class="title">📌 occupancy가 전부는 아니다</div>
+      <p>occupancy를 높이면 보통 좋지만, <strong>100%가 항상 최적은 아닙니다.</strong> 레지스터를 늘려(occupancy↓) 스레드당 일을 더 시키는 게 빠를 때도 있어요(ILP). "occupancy는 latency hiding에 충분할 만큼만" 확보하고, 실제 성능은 <a href="optimization.html#profile">프로파일러</a>로 확인하세요.</p>
+    </div>
+
+    <h2 id="priority">4.3 스트림 우선순위</h2>
+    <p>
+      여러 <a href="execution.html#async">스트림</a>이 동시에 일할 때, 급한 작업을 먼저 실행시키고 싶다면 <strong>우선순위 스트림</strong>을 씁니다. 자원이 비면 우선순위 높은 스트림의 블록이 먼저 SM에 배정됩니다.
+    </p>
+    <pre><code><span class="tok-key">int</span> lo, hi;
+<span class="tok-fn">cudaDeviceGetStreamPriorityRange</span>(&lo, &hi);   <span class="tok-com">// hi가 더 높은 우선순위(작은 값)</span>
+cudaStream_t urgent;
+<span class="tok-fn">cudaStreamCreateWithPriority</span>(&urgent, cudaStreamNonBlocking, hi);</code></pre>
+
+    <h2 id="preempt">4.4 선점(preemption)이 약하다</h2>
+    <p>
+      여기가 GPU의 중요한 한계입니다. <strong>블록은 SM 자원을 차지한 채 끝까지 실행(run-to-completion)</strong>합니다. 거대한 커널의 블록들이 모든 SM을 점유하면, 급한 커널의 블록은 <strong>SM 자원이 빌 때까지 대기</strong>해요 (head-of-line blocking).
+    </p>
+    <table>
+      <thead><tr><th></th><th>CPU</th><th>GPU</th></tr></thead>
+      <tbody>
+        <tr><td>선점</td><td>강함 — 급한 스레드가 즉시 끼어듦</td><td><strong>약함 — 블록은 보통 끝까지 실행</strong></td></tr>
+        <tr><td>우선순위 효과</td><td>실행 중인 것도 뺏음</td><td>주로 "다음 배정"에만 영향</td></tr>
+      </tbody>
+    </table>
+    <p>(Pascal+ 부터 명령 단위 부분 선점이 있지만 거칠고 비쌈.) 그래서 응답성이 필요하면:</p>
+    <ul>
+      <li><strong>커널을 작게/유계로</strong> — 블록이 빨리 끝나 SM 자원이 자주 풀림</li>
+      <li><strong>스트림 우선순위</strong> — 자원 빌 때 급한 블록부터</li>
+      <li><strong>oversubscribe 금지</strong> — GPU에 처리량 넘게 일을 안 쌓기</li>
+    </ul>
+
+    <h2 id="partition">4.5 MIG · MPS — 자원 분리</h2>
+    <p>여러 워크로드가 한 GPU를 공유할 때, 서로 간섭을 막는 두 방법:</p>
+    <table>
+      <thead><tr><th></th><th>MPS (Multi-Process Service)</th><th>MIG (Multi-Instance GPU)</th></tr></thead>
+      <tbody>
+        <tr><td>방식</td><td>여러 프로세스의 커널을 한 컨텍스트로 합쳐 동시 실행</td><td>GPU를 <strong>물리적으로 분할</strong>(SM·메모리 격리)</td></tr>
+        <tr><td>격리</td><td>약함 (성능 간섭 가능)</td><td><strong>강함 (하드웨어 격리)</strong></td></tr>
+        <tr><td>용도</td><td>작은 커널 여러 개의 활용률↑</td><td>QoS·멀티테넌시 보장</td></tr>
+        <tr><td>지원</td><td>대부분 GPU</td><td>A100/H100 등 데이터센터 GPU</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout tip">
+      <div class="title">✅ ④ 정리</div>
+      <p>SM은 <strong>ready warp로 0-오버헤드 전환</strong>해 지연을 가립니다(occupancy가 열쇠). 블록은 <strong>run-to-completion</strong>이라 선점이 약하니, 응답성은 <strong>작은 커널·스트림 우선순위·MIG/MPS</strong>로 확보합니다. 반복 워크로드의 launch 비용은 다음 장(<a href="graphs.html">⑤ Graphs</a>)에서 없앱니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="execution.html"><div class="dir">← 이전</div><div class="ttl">③ CUDA 동작 방식</div></a>
+      <a class="next" href="graphs.html"><div class="dir">다음 →</div><div class="ttl">⑤ CUDA Graphs</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>

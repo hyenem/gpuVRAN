@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⑥ 성능 최적화 — GPU·CUDA 노트</title>
+<meta name="description" content="메모리 병합(coalescing), shared memory 타일링, bank conflict, occupancy, 프로파일링을 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ⑥ 성능 최적화</div>
+    <h1>⑥ 성능 최적화</h1>
+    <p class="lead">①~④의 지식이 여기서 실전이 됩니다. 대부분의 GPU 커널은 <strong>메모리</strong>에서 막히므로, 메모리 접근 패턴 최적화가 가장 효과가 큽니다. 우선순위 순으로 정리합니다.</p>
+
+    <h2 id="coalescing">6.1 메모리 병합 (Coalescing) — 가장 효과 큼</h2>
+    <p>
+      한 warp의 32개 스레드가 <strong>연속된 메모리 주소</strong>를 읽으면, GPU는 이를 하나의 큰 트랜잭션으로 묶어 처리합니다(coalescing). 흩어진 주소를 읽으면 트랜잭션이 쪼개져 <a href="architecture.html#memory">대역폭</a>이 낭비됩니다.
+    </p>
+    <pre><code><span class="tok-com">// 좋음: 스레드 i가 배열 i를 읽음 → 연속 → 병합</span>
+C[i] = A[i] + B[i];        <span class="tok-com">// i = blockIdx.x*blockDim.x + threadIdx.x</span>
+
+<span class="tok-com">// 나쁨: 스레드가 stride로 흩어진 주소 접근 → 트랜잭션 쪼개짐</span>
+C[i*stride] = A[i*stride];</code></pre>
+    <p><strong>황금률</strong>: "스레드 i가 배열 i를 읽게 하라." 2D 데이터는 <strong>row-major 순서로 인접 스레드가 인접 열</strong>을 읽게 인덱싱하세요.</p>
+
+    <h2 id="shared">6.2 Shared Memory 타일링 — 재사용</h2>
+    <p>
+      global memory는 느리므로, <strong>여러 번 쓰일 데이터는 한 번 읽어 shared memory에 올려두고 재사용</strong>합니다. 행렬 곱이 대표 예입니다.
+    </p>
+    <pre><code><span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">matmul</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> N) {
+    <span class="tok-pp">__shared__</span> <span class="tok-key">float</span> tA[<span class="tok-num">16</span>][<span class="tok-num">16</span>], tB[<span class="tok-num">16</span>][<span class="tok-num">16</span>];
+    <span class="tok-key">int</span> row = blockIdx.y*<span class="tok-num">16</span>+threadIdx.y, col = blockIdx.x*<span class="tok-num">16</span>+threadIdx.x;
+    <span class="tok-key">float</span> sum = <span class="tok-num">0</span>;
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> t = <span class="tok-num">0</span>; t &lt; N/<span class="tok-num">16</span>; t++) {
+        tA[threadIdx.y][threadIdx.x] = A[row*N + t*<span class="tok-num">16</span>+threadIdx.x];
+        tB[threadIdx.y][threadIdx.x] = B[(t*<span class="tok-num">16</span>+threadIdx.y)*N + col];
+        <span class="tok-fn">__syncthreads</span>();             <span class="tok-com">// 타일 로딩 완료 대기</span>
+        <span class="tok-key">for</span> (<span class="tok-key">int</span> k=<span class="tok-num">0</span>;k&lt;<span class="tok-num">16</span>;k++) sum += tA[threadIdx.y][k]*tB[k][threadIdx.x];
+        <span class="tok-fn">__syncthreads</span>();             <span class="tok-com">// 덮어쓰기 전 대기</span>
+    }
+    C[row*N+col] = sum;
+}</code></pre>
+    <p>각 원소를 매번 global에서 읽는 대신 16×16 타일을 shared에 한 번 올려 재사용 → 메모리 접근이 수십 배 줄어 성능이 크게 오릅니다.</p>
+
+    <h2 id="bank">6.3 Bank Conflict — shared memory의 함정</h2>
+    <p>
+      shared memory는 <strong>32개 뱅크</strong>로 나뉩니다. 한 warp의 여러 스레드가 <strong>같은 뱅크의 다른 주소</strong>에 동시 접근하면 직렬화됩니다(bank conflict).
+    </p>
+    <ul>
+      <li><strong>충돌 없음</strong> — 스레드들이 서로 다른 뱅크에 접근 (또는 같은 주소 = 브로드캐스트)</li>
+      <li><strong>회피</strong> — 흔히 <strong>패딩</strong>으로: <code>__shared__ float tile[16][16+1];</code> (열을 +1 패딩해 뱅크 정렬을 어긋나게)</li>
+    </ul>
+
+    <h2 id="occupancy">6.4 Occupancy & 분기 최소화</h2>
+    <ul>
+      <li><strong>Occupancy</strong> — <a href="scheduling.html#occupancy">④에서 본</a>대로 레지스터·shared 사용을 조절해 SM에 충분한 warp 확보(latency hiding). 단 100%가 항상 최적은 아님.</li>
+      <li><strong>Warp divergence 최소화</strong> — <a href="architecture.html#simt">warp 안 분기</a>를 줄이기. 데이터를 정렬하거나 분기 없는(branchless) 코드로.</li>
+      <li><strong>전송 숨기기</strong> — <a href="execution.html#async">스트림 overlap</a> + pinned memory로 복사·연산 겹치기.</li>
+    </ul>
+
+    <h2 id="profile">6.5 프로파일링 — 추측하지 말고 측정하라</h2>
+    <p>최적화의 첫걸음은 <strong>병목을 찾는 것</strong>입니다. NVIDIA 도구:</p>
+    <table>
+      <thead><tr><th>도구</th><th>용도</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Nsight Systems</strong> (<code>nsys</code>)</td><td>전체 타임라인 — CPU/GPU/스트림/전송 overlap 파악</td></tr>
+        <tr><td><strong>Nsight Compute</strong> (<code>ncu</code>)</td><td>커널 단위 심층 — occupancy, 메모리 처리량, 병합률, bank conflict</td></tr>
+      </tbody>
+    </table>
+    <pre><code>nsys profile ./app          <span class="tok-com"># 타임라인 수집</span>
+ncu --set full ./app        <span class="tok-com"># 커널 메트릭 심층</span></code></pre>
+    <div class="callout warn">
+      <div class="title">⚠️ 직접 짜기 전에</div>
+      <p>행렬 곱·FFT·reduction 등은 <strong>라이브러리가 거의 항상 더 빠릅니다</strong> — <code>cuBLAS</code>, <code>cuFFT</code>, <code>CUB</code>/<code>Thrust</code>, <code>CUTLASS</code>를 먼저 고려하세요. 직접 최적화는 그걸로 안 될 때.</p>
+    </div>
+
+    <h2 id="checklist">6.6 최적화 체크리스트 (우선순위 순)</h2>
+    <ol>
+      <li><strong>프로파일링</strong>으로 병목 확인 (memory-bound? compute-bound?)</li>
+      <li><strong>메모리 병합</strong> — 가장 효과 큼</li>
+      <li><strong>shared memory 재사용</strong> (타일링), bank conflict 회피</li>
+      <li><strong>occupancy</strong> 확보 (latency hiding 충분할 만큼)</li>
+      <li><strong>분기 최소화</strong>, 전송 overlap</li>
+      <li><strong>반복 워크로드</strong>는 <a href="graphs.html">CUDA Graphs</a>로 launch 오버헤드 제거</li>
+      <li><strong>라이브러리</strong>로 대체 가능한지 항상 확인</li>
+    </ol>
+
+    <div class="callout tip">
+      <div class="title">✅ 완주!</div>
+      <p>아키텍처 → 프로그래밍 → 실행 → 스케줄링 → 그래프 → 최적화까지 한 바퀴 돌았습니다. "코드를 짜면 GPU 안에서 무슨 일이 벌어지는가"가 이제 한 줄로 이어집니다. 실제 커널을 <a href="https://colab.research.google.com" target="_blank" rel="noopener">Colab</a>에서 짜고 <code>ncu</code>로 프로파일링하며 손에 익히는 것을 추천합니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="graphs.html"><div class="dir">← 이전</div><div class="ttl">⑤ CUDA Graphs</div></a>
+      <a class="next" href="index.html"><div class="dir">홈으로 →</div><div class="ttl">학습 로드맵 다시 보기</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>

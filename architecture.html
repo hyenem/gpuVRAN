@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>① GPU 아키텍처 — GPU·CUDA 노트</title>
+<meta name="description" content="CPU vs GPU, SM 내부 구조, SIMT·warp, 메모리 계층, occupancy를 깊게 정리합니다.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<button class="menu-toggle" aria-label="메뉴">☰</button>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
+    <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
+    <div class="search-box">
+      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <div id="search-results" class="search-results"></div>
+    </div>
+    <nav class="nav-group">
+      <h4>시작</h4>
+      <a href="index.html">홈 · 학습 로드맵</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>① GPU 아키텍처</h4>
+      <a href="architecture.html">개요</a>
+      <a href="architecture.html#cpu-vs-gpu" class="sub">CPU vs GPU</a>
+      <a href="architecture.html#sm" class="sub">SM 내부 구조</a>
+      <a href="architecture.html#simt" class="sub">SIMT · Warp</a>
+      <a href="architecture.html#memory" class="sub">메모리 계층</a>
+      <a href="architecture.html#occupancy" class="sub">Occupancy</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>② CUDA 프로그래밍</h4>
+      <a href="programming.html">개요</a>
+      <a href="programming.html#model" class="sub">프로그래밍 모델</a>
+      <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#memory" class="sub">메모리 관리</a>
+      <a href="programming.html#sync" class="sub">동기화</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>③ 실행 모델</h4>
+      <a href="execution.html">개요</a>
+      <a href="execution.html#launch" class="sub">커널 launch의 실체</a>
+      <a href="execution.html#async" class="sub">비동기 · 스트림</a>
+      <a href="execution.html#events" class="sub">이벤트 · 동기화</a>
+      <a href="execution.html#dispatch" class="sub">블록 → SM 배정</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>④ 스케줄링</h4>
+      <a href="scheduling.html">개요</a>
+      <a href="scheduling.html#warp" class="sub">warp 스케줄링</a>
+      <a href="scheduling.html#occupancy" class="sub">occupancy 튜닝</a>
+      <a href="scheduling.html#priority" class="sub">스트림 우선순위</a>
+      <a href="scheduling.html#preempt" class="sub">선점(preemption)</a>
+      <a href="scheduling.html#partition" class="sub">MIG · MPS</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑤ CUDA Graphs</h4>
+      <a href="graphs.html">개요</a>
+      <a href="graphs.html#why" class="sub">왜 그래프인가</a>
+      <a href="graphs.html#stages" class="sub">3단계 동작</a>
+      <a href="graphs.html#build" class="sub">만드는 법</a>
+      <a href="graphs.html#update" class="sub">업데이트</a>
+      <a href="graphs.html#advanced" class="sub">고급 기능</a>
+    </nav>
+    <nav class="nav-group">
+      <h4>⑥ 성능 최적화</h4>
+      <a href="optimization.html">개요</a>
+      <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
+      <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
+      <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#profile" class="sub">프로파일링</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <div class="content-inner">
+    <div class="breadcrumb"><a href="index.html">홈</a> / ① GPU 아키텍처</div>
+    <h1>① GPU 아키텍처</h1>
+    <p class="lead">"GPU는 왜 빠른가, 안에서 무슨 일이 벌어지는가"의 직관을 잡는 게 목표입니다. 이 그림이 잡히면 CUDA 코드가 왜 그렇게 생겼는지, 스케줄링이 왜 그렇게 도는지 자연스럽게 이해됩니다.</p>
+
+    <h2 id="cpu-vs-gpu">1.1 CPU vs GPU — 설계 철학</h2>
+    <ul>
+      <li><strong>CPU = 지연시간(latency) 최적화</strong> — 하나의 작업을 최대한 빨리. 큰 캐시·분기예측·비순차실행 등 복잡한 제어 로직에 트랜지스터를 투자. 코어는 적지만(수~수십) 각자 매우 똑똑.</li>
+      <li><strong>GPU = 처리량(throughput) 최적화</strong> — 같은 연산을 수천~수만 데이터에 동시에. 제어 로직은 최소화하고 <strong>ALU를 대량으로</strong> 채움. 코어 하나는 단순하지만 수천 개가 병렬.</li>
+    </ul>
+    <table>
+      <thead><tr><th></th><th>CPU</th><th>GPU</th></tr></thead>
+      <tbody>
+        <tr><td>코어 수</td><td>수~수십</td><td>수천 (CUDA 코어)</td></tr>
+        <tr><td>코어 1개</td><td>매우 빠름·복잡</td><td>단순</td></tr>
+        <tr><td>캐시</td><td>크고 계층적</td><td>상대적으로 작음</td></tr>
+        <tr><td>지연 숨기기</td><td>큰 캐시로 줄임</td><td><strong>많은 스레드로 가림</strong></td></tr>
+        <tr><td>최적 작업</td><td>순차·분기 많은 로직</td><td>대규모 데이터 병렬</td></tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      <div class="title">🧠 핵심 직관</div>
+      <p>"같은 계산을 수많은 데이터에 반복"이면 GPU가 압도적입니다. 영상의 모든 픽셀, 행렬의 모든 원소, 신경망의 모든 가중치 같은 것들. 이 패턴을 어떻게 코드로 표현하느냐가 CUDA의 전부입니다.</p>
+    </div>
+
+    <h2 id="sm">1.2 SM 내부 구조 — GPU의 기본 프로세서</h2>
+    <p>
+      GPU 하나는 <strong>수십~수백 개의 SM(Streaming Multiprocessor)</strong>으로 이루어집니다. SM 하나가 "작은 독립 프로세서"이고, 우리가 실행하는 <strong>thread block이 SM에 배정</strong>되어 돌아갑니다.
+    </p>
+    <pre><code>GPU
+ ├─ SM 0 ─┐  각 SM이 블록들을 받아 독립 실행
+ ├─ SM 1  │  (GigaThread 엔진이 블록을 SM에 분배)
+ └─ SM N ─┘</code></pre>
+    <h3>SM 안에는 무엇이 (예: Ampere/Hopper, 아키텍처마다 다름)</h3>
+    <table>
+      <thead><tr><th>구성요소</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td><strong>CUDA 코어</strong> (~128 FP32/SM)</td><td>일반 산술 (덧셈·곱셈)</td></tr>
+        <tr><td><strong>Tensor 코어</strong> (~4/SM)</td><td>행렬 곱-누적(MMA), 딥러닝</td></tr>
+        <tr><td><strong>Warp 스케줄러</strong> (보통 4개/SM)</td><td>매 사이클 실행할 warp 선택</td></tr>
+        <tr><td><strong>레지스터 파일</strong> (65,536 × 32bit ≈ 256KB/SM)</td><td>스레드 지역 변수</td></tr>
+        <tr><td><strong>Shared memory / L1</strong> (~최대 228KB/SM)</td><td>블록 내 협력·캐싱</td></tr>
+        <tr><td><strong>LD/ST, SFU</strong></td><td>메모리 접근, 특수함수(sin/sqrt)</td></tr>
+      </tbody>
+    </table>
+    <p>핵심 — SM은 <strong>레지스터·shared memory·warp 슬롯을 "고정 예산"으로</strong> 가진 단위입니다. 이 예산이 <a href="#occupancy">occupancy</a>의 전부예요.</p>
+
+    <h2 id="simt">1.3 SIMT · Warp — GPU 실행의 단위</h2>
+    <h3>SIMT (Single Instruction, Multiple Threads)</h3>
+    <p>GPU는 <strong>하나의 명령어를 여러 스레드가 동시에</strong> 실행합니다. 프로그래머는 평범한 스칼라 코드처럼 짜면, 하드웨어가 알아서 병렬로 돌립니다. CPU의 SIMD를 "스레드" 단위로 추상화한 것이 SIMT입니다.</p>
+    <h3>Warp (워프)</h3>
+    <p>스레드는 개별로 도는 게 아니라 <strong>32개가 한 묶음(warp)</strong>으로 같은 명령어를 함께 실행합니다(NVIDIA). warp가 하드웨어 스케줄링의 기본 단위입니다.</p>
+    <div class="callout warn">
+      <div class="title">⚠️ Warp Divergence (분기 발산)</div>
+      <p>한 warp의 32개 스레드가 <code>if/else</code>로 갈라지면 GPU는 양쪽 경로를 <strong>순차 실행</strong>하며 해당 안 되는 스레드는 쉽니다. 분기가 많으면 성능이 급락 → "warp 안에서는 모두 같은 길을 가게 하라"가 원칙.</p>
+    </div>
+    <pre><code><span class="tok-com"># 계층 구조</span>
+Grid (커널 전체)
+ └─ Block (thread block, 한 SM에 배정)
+      └─ Warp (32 스레드)
+           └─ Thread</code></pre>
+
+    <h2 id="memory">1.4 메모리 계층 — GPU 성능의 진짜 병목</h2>
+    <p>많은 GPU 프로그램이 연산이 아니라 <strong>메모리 접근</strong>에서 막힙니다(memory-bound). 종류와 속도·공유 범위를 아는 것이 최적화의 절반입니다.</p>
+    <table>
+      <thead><tr><th>메모리</th><th>공유 범위</th><th>속도</th></tr></thead>
+      <tbody>
+        <tr><td><strong>레지스터</strong></td><td>스레드 전용</td><td>가장 빠름</td></tr>
+        <tr><td><strong>Shared Memory</strong></td><td>블록 내 (SM 내부)</td><td>매우 빠름</td></tr>
+        <tr><td><strong>L1 캐시</strong></td><td>SM</td><td>빠름</td></tr>
+        <tr><td><strong>L2 캐시</strong></td><td>모든 SM</td><td>빠름</td></tr>
+        <tr><td><strong>Global Memory (VRAM)</strong></td><td>모든 스레드</td><td>느림 (수백 사이클)</td></tr>
+        <tr><td><strong>Constant / Texture</strong></td><td>모든 스레드 (캐시·읽기전용)</td><td>읽기 최적화</td></tr>
+      </tbody>
+    </table>
+    <p>핵심 둘은 <a href="optimization.html#coalescing">메모리 병합(coalescing)</a>과 <a href="optimization.html#shared">shared memory 재사용</a> — <a href="optimization.html">⑥ 최적화</a>에서 자세히 다룹니다. 지금은 "global은 느리고, 가까운 메모리에 올려 재사용하는 게 핵심"만 기억하세요.</p>
+
+    <h2 id="occupancy">1.5 Occupancy — SM에 warp를 얼마나 채우나</h2>
+    <p>
+      SM이 동시에 품는 warp 수는 <strong>자원 한계</strong> 중 가장 빡빡한 것에 막힙니다. 이 비율(거주 warp ÷ 최대)이 <strong>occupancy</strong>입니다.
+    </p>
+    <table>
+      <thead><tr><th>한계</th><th>예 (Ampere)</th></tr></thead>
+      <tbody>
+        <tr><td>최대 warp/SM</td><td>64 warp (= 2048 스레드)</td></tr>
+        <tr><td>최대 블록/SM</td><td>~32 블록</td></tr>
+        <tr><td>레지스터/SM</td><td>65,536개 → 스레드가 많이 쓰면 warp↓</td></tr>
+        <tr><td>shared memory/SM</td><td>~164KB → 블록이 많이 쓰면 블록↓</td></tr>
+      </tbody>
+    </table>
+    <p><strong>예</strong> — 커널이 스레드당 레지스터 64개 쓰면: 2048 × 64 = 131,072 &gt; 65,536 → 절반(32 warp)만 거주 → <strong>occupancy 50%</strong>.</p>
+    <div class="callout tip">
+      <div class="title">💡 왜 occupancy가 중요한가</div>
+      <p>SM에 warp가 충분히 많아야, 한 warp가 메모리를 기다리며 멈출 때 <strong>다른 warp로 0-오버헤드 전환</strong>해 ALU를 놀리지 않습니다(latency hiding). 이게 "많은 스레드로 지연을 가린다"는 GPU의 핵심이고, <a href="scheduling.html#warp">④ 스케줄링</a>에서 더 깊게 봅니다.</p>
+    </div>
+
+    <div class="callout tip">
+      <div class="title">✅ ① 정리</div>
+      <p>GPU는 처리량 기계 — 같은 연산을 수천 데이터에 병렬. 실행은 <strong>warp(32스레드)</strong> 단위로 <strong>SM</strong>에서. 성능은 <strong>메모리 계층</strong>과 <strong>occupancy</strong>가 좌우. 이 넷이 ②~⑥의 토대입니다.</p>
+    </div>
+
+    <div class="pager">
+      <a href="index.html"><div class="dir">← 이전</div><div class="ttl">홈 · 학습 로드맵</div></a>
+      <a class="next" href="programming.html"><div class="dir">다음 →</div><div class="ttl">② CUDA 프로그래밍</div></a>
+    </div>
+
+  </div>
+  </main>
+</div>
+<script src="js/main.js"></script>
+</body>
+</html>
