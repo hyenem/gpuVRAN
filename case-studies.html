@@ -43,6 +43,7 @@
       <a href="case-studies.html#lookaside-cases" class="sub">lookaside 사례</a>
       <a href="case-studies.html#why-only-nvidia" class="sub">왜 NVIDIA뿐인가</a>
       <a href="case-studies.html#summary" class="sub">한 장 요약</a>
+      <a href="case-studies.html#greenfield" class="sub">그린필드 vs 브라운필드</a>
       <a href="ptp-timing.html">PTP & 프론트홀 타이밍</a>
       <a href="realtime.html">실시간 결정론 기법</a>
       <a href="boundary.html">경계 설계: 버퍼 & 분할</a>
@@ -50,6 +51,7 @@
       <a href="gpu-packet-io.html">GPU 패킷 I/O</a>
       <a href="gpu-mem-share.html">GPU 메모리 공유 & 코어 협력</a>
       <a href="tx-scheduling.html">TX 스케줄링 & GPU 선점</a>
+      <a href="cuda-graphs.html">CUDA Graphs 심화</a>
     </nav>
     <nav class="nav-group">
       <h4>Part 2 · CUDA</h4>
@@ -170,6 +172,33 @@ GPU lookaside?    —                      연구·벤치마크 단계 (DecodeX 
       </p>
     </div>
 
+    <h2 id="greenfield">5. 그린필드 vs 브라운필드 — 누가 먼저 도입하나</h2>
+    <p>
+      O-RAN/vRAN(그리고 GPU vRAN)을 누가 먼저 도입하느냐는 <strong>"기존 망(레거시)이 있느냐"</strong>로 갈립니다.
+    </p>
+    <table>
+      <thead><tr><th></th><th>그린필드 (Greenfield)</th><th>브라운필드 (Brownfield)</th></tr></thead>
+      <tbody>
+        <tr><td>정의</td><td>신규 망을 <strong>백지에서</strong> 구축 (레거시 없음)</td><td>이미 <strong>운영 중인 망</strong>이 있음</td></tr>
+        <tr><td>O-RAN 도입</td><td>쉬움 — 레거시 종속·통합 부담 없음</td><td>어려움 — 기존 독점 장비와 공존·통합 필요</td></tr>
+        <tr><td>예</td><td>Rakuten, 1&amp;1, DISH</td><td>기존 대형 MNO 대부분</td></tr>
+      </tbody>
+    </table>
+    <h3>대표 그린필드 사업자</h3>
+    <ul>
+      <li><strong>Rakuten Mobile</strong> (일본) — 세계 최초 <strong>완전 가상화·클라우드 네이티브 O-RAN</strong>. 단 망 구축에 수십억 달러 적자.</li>
+      <li><strong>1&amp;1</strong> (독일) — <strong>Rakuten Symphony 사설 클라우드</strong> 기반.</li>
+      <li><strong>DISH Network</strong> (미국) — <strong>AWS 퍼블릭 클라우드</strong> 기반. 단 2025년 EchoStar/DISH가 5G 망을 종료해 Mavenir 등 협력사가 타격.</li>
+    </ul>
+    <div class="callout warn">
+      <div class="title">⚠️ "백지"라 기술 도입은 쉬워도, 사업 성공은 별개</div>
+      <p>그린필드는 레거시가 없어 O-RAN을 <strong>기술적으로</strong> 빨리 도입하지만, <strong>경제적으로는 험난</strong>합니다 — Rakuten 대규모 적자, DISH 망 종료가 그 현실. 멀티벤더 통합·운영 성숙도가 받쳐주지 않으면 "오픈"이 곧 "쉬움"은 아닙니다.</p>
+    </div>
+    <div class="callout">
+      <div class="title">🔗 GPU vRAN과의 연결</div>
+      <p>레거시 종속이 없는 <strong>그린필드가 GPU/AI-RAN 같은 신기술을 먼저 채택</strong>합니다 (<a href="case-studies.html#inline-cases">SoftBank의 AI-RAN</a> 흐름도 이 맥락). 다만 시장의 대부분은 <strong>브라운필드(기존 MNO)</strong>라, 진짜 대규모 확산은 결국 브라운필드 통합 난이도에 달려 있습니다.</p>
+    </div>
+
     <h2 id="sources">참고 자료</h2>
     <ul>
       <li><a href="https://developer.nvidia.com/blog/performing-the-vran-benchmark-with-gpus-using-the-nvidia-aerial-sdk/" target="_blank" rel="noopener">SoftBank Benchmarks vRAN with GPUs and the NVIDIA Aerial SDK</a></li>
@@ -184,6 +213,9 @@ GPU lookaside?    —                      연구·벤치마크 단계 (DecodeX 
       <li><a href="https://www.qualcomm.com/news/onq/2022/10/qualcomm-5g-ran-platforms--driving-for-full-scale-open-vran-comm" target="_blank" rel="noopener">Qualcomm 5G RAN Platforms — Open vRAN</a></li>
       <li><a href="https://www.rcrwireless.com/20230615/analyst-angle/the-competitive-landscape-of-virtualized-ran-and-intel-vran-boost-analyst-angle" target="_blank" rel="noopener">The competitive landscape of vRAN and Intel vRAN Boost (RCR Wireless)</a></li>
       <li><a href="https://arxiv.org/pdf/2305.09588" target="_blank" rel="noopener">Hardware Acceleration for Open RAN (arXiv survey)</a></li>
+      <li><a href="https://www.rcrwireless.com/20220808/open_ran/greenfield-vs-brownfield-wheres-the-open-ran-sweet-spot" target="_blank" rel="noopener">Greenfield vs. brownfield: Where's the Open RAN sweet spot? (RCR)</a></li>
+      <li><a href="https://stlpartners.com/insights/open-ran-and-vran-deployments-by-operators/" target="_blank" rel="noopener">Open RAN and vRAN deployments by operators (STL Partners)</a></li>
+      <li><a href="https://techblog.comsoc.org/2025/09/02/mulit-vendor-open-ran-stalls-as-echostar-dish-shuts-down-its-5g-network-leaving-mavenir-in-the-lurch/" target="_blank" rel="noopener">EchoStar/DISH shuts down 5G network (IEEE ComSoc, 2025)</a></li>
     </ul>
 
     <div class="pager">
