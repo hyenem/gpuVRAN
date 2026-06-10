@@ -104,6 +104,11 @@
 
 <span class="tok-com">// 예) 블록 크기 256일 때, 3번 블록의 5번 스레드라면:</span>
 <span class="tok-com">//     idx = 3 * 256 + 5 = 773  → "나는 773번 일꾼, 773번 데이터를 처리"</span></code></pre>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — "스레드를 내가 안 만든다"</div>
+      <p>CPU에선 병렬 처리를 하려면 <code>pthread_create</code>나 OpenMP로 <strong>스레드를 직접 만들고 일을 나눠</strong>줬죠. CUDA는 그런 게 없습니다. <strong>커널 하나를 <code>&lt;&lt;&lt;블록수, 스레드수&gt;&gt;&gt;</code>로 실행하면, 하드웨어가 그 수만큼 스레드를 한꺼번에 만들어</strong>줍니다. 당신은 "일꾼 한 명이 할 일"만 커널 함수에 적고, "몇 명을 만들지"만 launch에서 정하면 끝이에요. CPU의 <code>for</code> 루프 "i를 0~n 돌며 처리"가, GPU에선 "n명을 만들고 각자 자기 <code>idx</code> 처리"로 뒤집힙니다 — 루프 변수 <code>i</code>가 스레드 번호 <code>idx</code>로 바뀌는 거죠.</p>
+    </div>
+
     <div class="callout tip">
       <div class="title">🧩 CUDA의 핵심 사고법 (이거 하나면 됨)</div>
       <p>CUDA 프로그래밍이란 결국 — <strong>"내가 처리할 배열의 칸 번호를, 내 좌표(blockIdx, threadIdx)로부터 어떻게 계산하지?"</strong>를 정하는 일입니다. 그 번호만 정하면, 나머지는 평범한 C++ 코드예요. CPU 코드의 <code>for (i=0; i&lt;n; i++)</code> 루프가, GPU에선 "수천 명이 각자 자기 <code>idx</code> 하나씩 맡는" 것으로 바뀌는 거죠.</p>
@@ -155,9 +160,10 @@ size_t bytes = n * <span class="tok-key">sizeof</span>(<span class="tok-key">flo
     <p>
       <code>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;</code>가 CUDA에서만 보이는 <strong>실행 구성(launch configuration)</strong> 문법입니다. "블록 몇 개, 블록당 스레드 몇 개로 일꾼을 펼쳐라"는 뜻이에요. 이 한 줄이 실제로 GPU 안에서 어떻게 처리되는지는 <a href="execution.html">③ 실행 모델</a>에서 낱낱이 파헤칩니다.
     </p>
-    <div class="callout">
-      <div class="title">🤔 왜 복사(cudaMemcpy)를 해야 하나요?</div>
-      <p>보통 외장 GPU는 CPU와 <strong>메모리가 따로</strong>입니다(GPU는 자기 전용 VRAM 사용). 그래서 CPU 메모리의 데이터를 GPU가 보려면 <strong>PCIe라는 통로로 복사</strong>해와야 해요. 이 복사가 은근히 비싸서, "복사를 줄이는 것"도 최적화의 한 축입니다(<a href="execution.html#async">③장 스트림</a>).</p>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — 왜 <code>malloc</code> 두 번에 복사까지 하나요?</div>
+      <p>CPU에선 <code>malloc</code> 한 번이면 그 포인터를 어디서나 쓰죠. GPU는 <strong>CPU와 메모리(주소 공간)가 완전히 분리</strong>되어 있습니다 — GPU는 자기 전용 VRAM을 쓰고, CPU RAM을 직접 못 봐요. 그래서 ① <code>cudaMalloc</code>으로 <strong>GPU 쪽에 따로</strong> 공간을 잡고, ② <code>cudaMemcpy</code>로 <strong>PCIe 통로를 통해 데이터를 옮겨</strong>야 합니다.</p>
+      <p>⚠️ 그리고 중요한 함정 — <code>cudaMalloc</code>이 준 포인터(<code>dA</code>)는 <strong>"GPU 주소"</strong>라, <strong>CPU 코드에서 <code>dA[0]</code>처럼 역참조하면 크래시</strong>합니다(반대로 CPU 포인터를 커널에 넘겨도 안 됨). "이 포인터는 CPU용? GPU용?"을 늘 구분하세요. 이 복사 비용 때문에 "복사 줄이기"가 최적화의 한 축입니다(<a href="execution.html#async">③장 스트림</a>). 참고로 <a href="#memory">Unified Memory</a>를 쓰면 이 구분을 시스템이 대신 해줘서 입문이 편해집니다.</p>
     </div>
 
     <h2 id="memory">2.3 메모리 관리 — 세 가지 방법</h2>
@@ -205,6 +211,11 @@ tile[threadIdx.x] = A[idx];        <span class="tok-com">// ① 각자 자기 �
       여러 일꾼이 <strong>같은 메모리 칸</strong>을 동시에 갱신하면 값이 꼬입니다(예: 합 구하기). <code>atomicAdd</code> 같은 아토믹 연산은 "한 번에 한 명씩 안전하게" 갱신해줍니다. 단 경쟁이 심하면 줄서기(직렬화)가 생겨 느려지니 남용은 금물.
     </p>
     <pre><code><span class="tok-fn">atomicAdd</span>(&sum, value);   <span class="tok-com">// 여러 스레드가 sum을 안전하게 누적</span></code></pre>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — <code>__syncthreads()</code> vs mutex/barrier</div>
+      <p>CPU의 <code>pthread_barrier</code>는 <em>지정한 모든 스레드</em>를 모읍니다. <code>__syncthreads()</code>는 비슷하지만 <strong>"같은 블록 안의 스레드"만</strong> 모읍니다 — <strong>다른 블록(=다른 SM)과는 커널 도중에 절대 동기화할 수 없어요.</strong> 블록 간 협력이 필요하면 커널을 둘로 나눠야 합니다(커널 사이가 자연스러운 동기화 지점이거든요). 또 <strong>주의</strong>: <code>__syncthreads()</code>를 <code>if</code> 안에 넣어 <em>일부 스레드만</em> 도달하게 하면 영원히 멈춥니다(데드락) — 블록의 모든 스레드가 같이 도달해야 해요. 한편 mutex 같은 "락"은 GPU에서 거의 안 씁니다(수천 스레드가 락을 다투면 망함). 대신 <strong>아토믹</strong>이나 잘 설계된 <strong>reduction 패턴</strong>을 씁니다.</p>
+    </div>
+
     <div class="callout warn">
       <div class="title">⚠️ 경쟁 조건(race condition)이란</div>
       <p>여러 일꾼이 약속(동기화) 없이 같은 메모리를 동시에 읽고 쓰면, <strong>실행할 때마다 결과가 달라지는</strong> 골치 아픈 버그가 생깁니다. 이걸 race condition이라고 해요. 공용 데이터를 다룰 땐 → <code>__syncthreads()</code>(작업대 공유) 또는 아토믹(누적)을 쓰는 습관을 들이세요.</p>

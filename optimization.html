@@ -101,6 +101,11 @@ C[i * stride] = A[i * stride];</code></pre>
       <p><strong>"이웃한 스레드가 이웃한 메모리를 읽게 하라."</strong> 2차원 데이터(행렬 등)를 다룰 땐, <strong>이웃 스레드(threadIdx.x가 1 차이)가 이웃한 열을 읽도록</strong> 인덱스를 짜세요. 행과 열 순서를 바꾸기만 해도 몇 배 빨라지는 일이 흔합니다.</p>
     </div>
 
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — coalescing ≈ 캐시 라인 + false sharing의 친척</div>
+      <p>CPU 최적화에서 "데이터를 순차적으로 접근해 <strong>캐시 라인</strong>을 잘 타게 하라", "여러 스레드가 같은 캐시 라인을 건드리는 <strong>false sharing</strong>을 피하라"고 하죠. GPU의 coalescing도 정확히 같은 결의 이야기입니다 — 다만 단위가 "한 스레드의 순차 접근"이 아니라 <strong>"한 warp 32 스레드의 동시 접근이 연속 주소인가"</strong>예요. CPU에선 캐시가 자동으로 도와주지만, GPU에선 <strong>인덱싱을 어떻게 짜느냐로 당신이 직접</strong> 병합 여부를 결정합니다. "메모리 레이아웃과 접근 패턴이 성능을 지배한다"는 직관은 CPU와 똑같으니, 그 감각을 그대로 가져오시면 됩니다.</p>
+    </div>
+
     <h2 id="shared">6.2 Shared Memory 타일링 — "한 번 가져와 우려먹기"</h2>
     <p>
       창고(global memory)는 느립니다. 그러니 <strong>여러 번 쓸 데이터는 한 번만 가져와서 공용 작업대(shared memory)에 올려두고 재사용</strong>하면 됩니다. 이걸 <strong>타일링(tiling)</strong>이라 하고, 대표 예가 행렬 곱이에요. (행렬 곱은 같은 값을 여러 번 읽거든요.)

@@ -97,6 +97,11 @@ warp D:                  [계산]          ← D도 → 계산기(ALU)가 안 �
       <p>이게 GPU의 핵심 비법입니다. CPU는 큰 캐시로 메모리 지연을 <strong>줄이려</strong> 하지만, GPU는 <strong>대기 중인 다른 일꾼으로 그 시간을 메워(가려) 버립니다.</strong> 그러려면 당연히 SM에 <strong>대기 중인 warp가 충분히 많아야</strong> 하죠. 그래서 occupancy(일꾼 채움 정도)가 중요한 거예요. 바로 다음 절입니다.</p>
     </div>
 
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — "문맥 전환이 0-비용이라고?"</div>
+      <p>CPU에서 스레드 전환(context switch)은 <strong>비쌉니다</strong> — 레지스터를 메모리에 저장하고, 다른 스레드 것을 복원하고, 캐시도 식어버리죠(보통 수천 사이클). 그래서 OS는 "되도록 안 바꾸려고" 애씁니다. 그런데 GPU의 warp 전환은 <strong>말 그대로 0에 가깝습니다.</strong> 비결은 — <strong>SM에 올라온 모든 warp의 레지스터가 거대한 레지스터 파일에 "동시에 상주"</strong>하기 때문이에요(①에서 본 256KB의 이유!). 저장·복원할 게 없으니, 반장은 매 사이클 자유롭게 warp를 갈아끼웁니다. 그래서 GPU는 "메모리 기다리는 warp를 다른 warp로 가리는" 전략이 가능한 거고, CPU는 (전환이 비싸서) 대신 큰 캐시로 지연 자체를 줄이는 거예요. <strong>이게 두 칩의 가장 근본적인 철학 차이</strong>입니다.</p>
+    </div>
+
     <h2 id="occupancy">4.2 Occupancy 튜닝 — 실제로 어떻게 올리나</h2>
     <p>
       <a href="architecture.html#occupancy">①에서 본 occupancy</a>를 코드에서 끌어올리는 실전 방법입니다. occupancy를 막는 건 보통 "일꾼이 자원을 너무 많이 쓰는" 경우예요:
@@ -139,6 +144,11 @@ cudaStream_t urgent;
         <tr><td>우선순위 효과</td><td>실행 중인 것도 밀어냄</td><td>주로 "다음에 올릴 것"에만 영향</td></tr>
       </tbody>
     </table>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — "OS가 스케줄 안 하나? nice/우선순위는?"</div>
+      <p>CPU에선 OS 스케줄러가 <strong>선점적으로</strong> 스레드를 굴립니다 — 타이머 인터럽트로 수시로 끼어들어 공평하게 나눠주고, <code>nice</code>·실시간 우선순위로 급한 걸 즉시 앞세울 수 있죠. <strong>GPU엔 그런 OS 스케줄러가 없습니다.</strong> 하드웨어 warp 스케줄러가 굴리는데, 이건 (warp끼리는 0-비용으로 잘 섞지만) <strong>한 번 SM에 올라간 블록을 도중에 쫓아내지 못합니다</strong>(run-to-completion). 그래서 CPU에선 당연한 "급한 작업이 긴 작업을 밀어내고 즉시 실행"이 GPU에선 잘 안 돼요. <code>cudaStreamCreateWithPriority</code>가 있지만, 이건 "<em>다음에 올릴</em> 블록"을 고를 때만 영향을 줄 뿐, 실행 중인 걸 멈추진 못합니다. 실시간 응답이 중요하면 이 한계를 설계로 우회해야 합니다(아래).</p>
+    </div>
+
     <p>(최신 GPU(Pascal 이후)엔 명령 단위 부분 선점이 있긴 한데, 거칠고 비쌉니다.) 그래서 <strong>응답성</strong>이 필요하면 이렇게 대처합니다:</p>
     <ul>
       <li><strong>커널을 작게 쪼개기</strong> — 블록이 빨리 끝나면 SM 자리가 자주 비어서, 급한 일이 곧 올라갈 수 있어요.</li>

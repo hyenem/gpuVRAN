@@ -102,6 +102,11 @@
         <li><code>cudaDeviceSynchronize()</code> — "GPU의 모든 일이 끝날 때까지 여기서 대기".</li>
       </ul>
     </div>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — "함수 호출인데 왜 안 기다리지?"</div>
+      <p>CPU에서 <code>foo()</code>를 부르면, <code>foo</code>가 <strong>끝나야</strong> 다음 줄이 실행되죠(동기). 그래서 <code>kernel&lt;&lt;&lt;&gt;&gt;&gt;()</code> 다음 줄에서 결과를 읽으려다 "값이 이상해요" 하는 일이 흔합니다. CUDA 커널 호출은 <strong>함수 호출이 아니라 "비동기 작업 제출"</strong>이에요 — <code>std::async</code>나 작업 큐에 일을 던지는 것에 가깝습니다. CPU는 제출만 하고 바로 다음 줄로 가버려요. 그래서 결과가 필요한 시점엔 반드시 <strong>"끝날 때까지 기다려"</strong>를 명시해야 합니다(<code>cudaMemcpy</code>는 자동으로 기다려줌, 아니면 <code>cudaDeviceSynchronize()</code>). 또 하나 — 커널 안에서 난 에러는 호출한 그 줄이 아니라 <strong>나중에 동기화하는 줄에서</strong> 보고됩니다. 그래서 에러 체크를 <code>cudaDeviceSynchronize()</code> 직후에 하는 게 정석이에요.</p>
+    </div>
+
     <div class="callout tip">
       <div class="title">💡 ②의 launch 오버헤드를 기억하세요</div>
       <p>위 단계 ②의 <strong>~µs 오버헤드</strong>는 큰 커널 하나엔 무시할 만하지만, <strong>작은 커널을 수십 개 반복</strong>하면 이게 쌓여서 병목이 됩니다. 이 문제를 통째로 해결하는 게 <a href="graphs.html">⑤ CUDA Graphs</a>예요. 지금은 "launch엔 공짜가 아닌 비용이 있다"만 기억!</p>
@@ -129,6 +134,11 @@
     <pre><code><span class="tok-com"># 겹침(overlap) 효과 — 시간이 줄어듦</span>
 스트림1:  [복사0][커널0]
 스트림2:        [복사1][커널1]   ← 복사1이 커널0과 같은 시간에 진행</code></pre>
+    <div class="callout cpu">
+      <div class="title">👤 CPU 개발자라면 — "스트림 = 스레드"가 아닙니다</div>
+      <p>스트림을 CPU의 워커 스레드처럼 생각하기 쉬운데, 다릅니다. 스트림은 <strong>일을 하는 주체가 아니라 "순서가 보장되는 작업 대기열(큐)"</strong>일 뿐이에요. 실제 일은 GPU의 SM들이 하고, 스트림은 그저 "이 큐에 넣은 것들은 순서대로, 다른 큐와는 병렬로 처리해도 됨"이라는 <strong>의존성 표시</strong>입니다. 그래서 "스트림 8개 = 8배 빠름"이 아니라, 스트림은 <strong>"복사하는 동안 계산도 같이 돌려서 빈 시간을 없애는"</strong> 용도예요(자원이 남을 때만 효과). CPU의 작업 큐 + 비동기 실행 모델에 가장 가깝습니다.</p>
+    </div>
+
     <div class="callout">
       <div class="title">📌 조건</div>
       <p>비동기 복사(<code>cudaMemcpyAsync</code>)가 진짜로 겹치려면, 호스트 메모리가 <a href="programming.html#memory">pinned memory</a>여야 합니다. 일반 메모리면 효과가 제한돼요.</p>

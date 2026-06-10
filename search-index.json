@@ -1,7 +1,7 @@
 [
   {"title":"홈 · 학습 로드맵","section":"시작","url":"index.html","text":"gpu cuda 학습 로드맵 아키텍처 프로그래밍 스케줄링 처리량"},
 
-  {"title":"CPU vs GPU","section":"① GPU 아키텍처","url":"architecture.html#cpu-vs-gpu","text":"cpu gpu 차이 latency throughput 처리량 지연 코어 alu 설계 철학 simt"},
+  {"title":"CPU vs GPU","section":"① GPU 아키텍처","url":"architecture.html#cpu-vs-gpu","text":"cpu gpu 차이 latency throughput 처리량 지연 코어 alu 설계 철학 simt cpu 개발자 개념 대응표 pthread malloc memcpy context switch 문맥 전환 캐시 shared memory 선점 preemption 스트림 syncthreads barrier"},
   {"title":"SM 내부 구조","section":"① GPU 아키텍처","url":"architecture.html#sm","text":"sm streaming multiprocessor 내부 구조 cuda 코어 tensor 레지스터 파일 shared memory warp 스케줄러 gigathread"},
   {"title":"SIMT · Warp","section":"① GPU 아키텍처","url":"architecture.html#simt","text":"simt single instruction multiple threads warp 32 스레드 divergence 분기 발산"},
   {"title":"메모리 계층","section":"① GPU 아키텍처","url":"architecture.html#memory","text":"메모리 계층 레지스터 shared memory global l1 l2 캐시 vram constant 공유 범위 memory-bound"},
