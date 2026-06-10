@@ -50,6 +50,12 @@
   {"title":"CPU-GPU 작업 분할","section":"경계 설계","url":"boundary.html#partition","text":"cpu gpu 분할 partition packet size 크로스오버 저부하 prb inline lookaside 결합"},
   {"title":"C/U-plane 분류 (CP/UP)","section":"경계 설계","url":"boundary.html#cu-plane","text":"cp up c-plane u-plane control user plane 분류 cpu gpu flow steering eaxc ecpri cu-cp cu-up cumac 평면별 분할"},
   {"title":"분할 축과 숨은 비용","section":"경계 설계","url":"boundary.html#hidden","text":"분할 축 기능 셀 캐리어 평면 부하 적응 데이터 지역성 병합 동기 오버헤드 결정론 지터"},
+  {"title":"eAxC ID 매핑","section":"심화 · 데이터 이동","url":"eaxc.html","text":"eaxc extended antenna carrier id 매핑 안테나 캐리어 스트림 라우팅 라우팅"},
+  {"title":"eAxC란","section":"eAxC ID 매핑","url":"eaxc.html#what","text":"eaxc extended antenna-carrier 식별자 ecpri rtcid pcid iq 스트림 demux 디멀티플렉스 massive mimo"},
+  {"title":"eAxC ID 구조 (16비트)","section":"eAxC ID 매핑","url":"eaxc.html#structure","text":"eaxc 구조 du_port_id bandsector_id cc_id ru_port_id 16비트 서브필드 비트 할당 configurable m-plane"},
+  {"title":"flow steering 큐 분류","section":"eAxC ID 매핑","url":"eaxc.html#steering","text":"flow steering rte_flow 큐 분류 eaxc nic gpudirect 디멀티플렉스 rss"},
+  {"title":"GPU 버퍼 레이아웃 매핑","section":"eAxC ID 매핑","url":"eaxc.html#buffer","text":"gpu 버퍼 레이아웃 eaxc slot symbol prb offset 인덱스 채널추정 mimo coalescing"},
+  {"title":"massive MIMO와 Category A/B","section":"eAxC ID 매핑","url":"eaxc.html#mimo","text":"massive mimo 안테나 레이어 category a b 빔포밍 precoding ru du eaxc 개수 대역폭"},
 
   {"title":"CUDA 프로그래밍 모델","section":"Part 2 · CUDA","url":"cuda.html#model","text":"cuda grid block thread blockidx threadidx blockdim 프로그래밍 모델 인덱스"},
   {"title":"첫 커널 (벡터 덧셈)","section":"Part 2 · CUDA","url":"cuda.html#first-kernel","text":"커널 kernel __global__ cudamalloc cudamemcpy 벡터 덧셈 launch 실행 구성 비동기"},
