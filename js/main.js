@@ -52,6 +52,48 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// 코드 블록 복사 버튼
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.type = 'button';
+    btn.textContent = '복사';
+    btn.setAttribute('aria-label', '코드 복사');
+    btn.addEventListener('click', async () => {
+      const code = pre.querySelector('code');
+      try {
+        await navigator.clipboard.writeText((code || pre).innerText);
+        btn.textContent = '복사됨 ✓';
+        btn.classList.add('done');
+      } catch {
+        btn.textContent = '실패';
+      }
+      setTimeout(() => { btn.textContent = '복사'; btn.classList.remove('done'); }, 1600);
+    });
+    pre.appendChild(btn);
+  });
+});
+
+// 키보드 단축키: '/' 검색 포커스, ←/→ 이전·다음 장 이동
+document.addEventListener('DOMContentLoaded', () => {
+  const isTyping = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+  document.addEventListener('keydown', e => {
+    if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '/') {
+      const input = document.getElementById('site-search');
+      if (input) { e.preventDefault(); input.focus(); }
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const pager = document.querySelector('.pager');
+      if (!pager) return;
+      const link = e.key === 'ArrowRight'
+        ? pager.querySelector('a.next')
+        : pager.querySelector('a:not(.next)');
+      if (link && link.getAttribute('href')) location.href = link.getAttribute('href');
+    }
+  });
+});
+
 // ===== 사이트 전체 검색 =====
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('site-search');

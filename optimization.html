@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>⑥ 성능 최적화 — GPU·CUDA 노트</title>
 <meta name="description" content="메모리 병합(coalescing), shared memory 타일링, bank conflict, occupancy, 프로파일링을 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="⑥ 성능 최적화 — GPU·CUDA 노트">
+<meta property="og:description" content="메모리 병합(coalescing), shared memory 타일링, bank conflict, occupancy, 프로파일링을 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:url" content="https://hyenem.github.io/gpuVRAN/optimization.html">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://hyenem.github.io/gpuVRAN/optimization.html">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
@@ -16,7 +23,7 @@
     <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
     <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…  ( / )" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
     <nav class="nav-group">
@@ -37,8 +44,10 @@
       <a href="programming.html">개요</a>
       <a href="programming.html#model" class="sub">프로그래밍 모델</a>
       <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#patterns" class="sub">2D · grid-stride 패턴</a>
       <a href="programming.html#memory" class="sub">메모리 관리</a>
       <a href="programming.html#sync" class="sub">동기화</a>
+      <a href="programming.html#compile" class="sub">컴파일 · 실행</a>
     </nav>
     <nav class="nav-group">
       <h4>③ 실행 모델</h4>
@@ -69,9 +78,11 @@
     <nav class="nav-group">
       <h4>⑥ 성능 최적화</h4>
       <a href="optimization.html">개요</a>
+      <a href="optimization.html#roofline" class="sub">병목 진단 (roofline)</a>
       <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
       <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
       <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#warp-level" class="sub">warp 셔플 · reduction</a>
       <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
@@ -80,14 +91,41 @@
   <div class="content-inner">
     <div class="breadcrumb"><a href="index.html">홈</a> / ⑥ 성능 최적화</div>
     <h1>⑥ 성능 최적화</h1>
-    <p class="lead">드디어 ①~④의 지식이 실전 무기가 되는 장입니다. 핵심 원칙 하나만 먼저 — <strong>대부분의 GPU 커널은 "계산"이 아니라 "메모리 기다림"에서 느려집니다.</strong> 그래서 메모리 접근 패턴을 손보는 게 가장 효과가 큽니다. 효과 큰 순서대로 정리할게요.</p>
+    <p class="lead">드디어 ①~⑤의 지식이 실전 무기가 되는 장입니다. 핵심 원칙 하나만 먼저 — <strong>대부분의 GPU 커널은 "계산"이 아니라 "메모리 기다림"에서 느려집니다.</strong> 그래서 메모리 접근 패턴을 손보는 게 가장 효과가 큽니다. 효과 큰 순서대로 정리할게요.</p>
 
     <div class="callout warn">
       <div class="title">⚠️ 최적화의 제1 원칙</div>
       <p><strong>"추측하지 말고 측정하라."</strong> 어디가 느린지 모르고 손대면 헛수고하기 쉽습니다. 그래서 이 장은 기법을 먼저 보고, 마지막에 <a href="#profile">프로파일링(측정)</a>으로 마무리합니다. 실제로는 측정 → 손보기 → 다시 측정 순서로 돌리세요.</p>
     </div>
 
-    <h2 id="coalescing">6.1 메모리 병합 (Coalescing) — 효과 가장 큼</h2>
+    <h2 id="roofline">6.1 병목 진단 — 내 커널은 memory-bound인가 compute-bound인가</h2>
+    <p>
+      기법으로 들어가기 전에, <strong>"이 커널의 한계는 어디서 오는가"</strong>를 판단하는 사고법부터. 커널의 속도는 결국 둘 중 하나에 막힙니다 — <strong>계산기(ALU)의 속도</strong>(compute-bound)거나, <strong>창고에서 데이터를 나르는 속도</strong>(memory-bound)거나. 어느 쪽인지에 따라 처방이 완전히 달라져요.
+    </p>
+    <p>판단 도구가 <strong>연산 강도(arithmetic intensity)</strong>입니다 — <strong>"메모리에서 1바이트 가져올 때마다 계산을 몇 번 하는가"</strong>(FLOP/byte):</p>
+    <pre><code><span class="tok-com">// 예: 벡터 덧셈 C[i] = A[i] + B[i]</span>
+<span class="tok-com">// 원소 하나당 — 읽기 8바이트(A,B) + 쓰기 4바이트(C) = 12바이트 이동, 덧셈 1번</span>
+연산 강도 = 1 FLOP / 12 byte ≈ <span class="tok-num">0.08</span>
+
+<span class="tok-com">// GPU의 균형점 (예: A100) — 계산 19,500 GFLOP/s ÷ 메모리 1,555 GB/s ≈ 12.5 FLOP/byte</span>
+<span class="tok-com">// 0.08 ≪ 12.5  →  벡터 덧셈은 극단적 memory-bound!</span>
+<span class="tok-com">//                 계산기는 거의 놀고, 성능은 100% 메모리 대역폭이 결정</span></code></pre>
+    <p>
+      이 "균형점"보다 연산 강도가 낮으면 memory-bound(대부분의 커널이 여기), 높으면 compute-bound입니다. 이 관계를 그래프로 그린 게 유명한 <strong>roofline 모델</strong>이에요 — 지붕(roof)처럼 생긴 성능 상한선에서, 왼쪽 비탈(메모리 한계)에 있느냐 천장(계산 한계)에 닿았느냐를 보는 거죠.
+    </p>
+    <table>
+      <thead><tr><th>진단</th><th>의미</th><th>처방</th></tr></thead>
+      <tbody>
+        <tr><td><strong>memory-bound</strong></td><td>계산기가 데이터를 기다리며 놂</td><td>메모리 이동량 줄이기 — <a href="#coalescing">병합(6.2)</a>, <a href="#shared">재사용(6.3)</a>이 약. 계산 최적화는 <em>효과 없음</em></td></tr>
+        <tr><td><strong>compute-bound</strong></td><td>계산기가 풀가동 중</td><td>계산량 줄이기 — 더 싼 수식, 낮은 정밀도(FP16 등), Tensor 코어 활용</td></tr>
+        <tr><td><strong>latency-bound</strong></td><td>둘 다 놀고 있음 (일감 부족)</td><td>병렬성 늘리기 — <a href="scheduling.html#occupancy">occupancy</a>·ILP 확보, 더 큰 문제를 한 번에</td></tr>
+      </tbody>
+    </table>
+    <p>
+      흥미로운 점 — 연산 강도는 <strong>알고리즘 구현에 따라 바뀝니다.</strong> 행렬 곱을 그냥 짜면 같은 원소를 N번씩 창고에서 다시 읽어 memory-bound지만, <a href="#shared">타일링(6.3)</a>으로 한 번 가져온 데이터를 우려먹으면 "바이트당 연산 횟수"가 타일 크기만큼 올라가 compute-bound로 바뀌어요. <strong>6.2~6.3의 기법들은 결국 "연산 강도를 끌어올리는 기술"</strong>입니다. 내 커널이 어느 쪽인지는 추측 말고 <a href="#profile">Nsight Compute(6.7)</a>가 직접 알려줍니다.
+    </p>
+
+    <h2 id="coalescing">6.2 메모리 병합 (Coalescing) — 효과 가장 큼</h2>
     <p>
       <a href="architecture.html#memory">①에서</a> "32명이 창고의 연속된 칸을 한꺼번에 가져오면 효율적"이라고 했죠. 그게 <strong>coalescing(메모리 병합)</strong>입니다. 한 warp(32 스레드)가 <strong>연속된 주소</strong>를 읽으면, GPU가 그걸 <strong>하나의 큰 운반</strong>으로 묶어 처리해요. 반대로 주소가 흩어져 있으면 운반을 여러 번 쪼개야 해서 <a href="architecture.html#memory">대역폭(메모리 통로)</a>이 낭비됩니다.
     </p>
@@ -155,7 +193,7 @@ C[i * stride] = A[i * stride];</code></pre>
       <p>CPU 최적화에서 "데이터를 순차적으로 접근해 <strong>캐시 라인</strong>을 잘 타게 하라", "여러 스레드가 같은 캐시 라인을 건드리는 <strong>false sharing</strong>을 피하라"고 하죠. GPU의 coalescing도 정확히 같은 결의 이야기입니다 — 다만 단위가 "한 스레드의 순차 접근"이 아니라 <strong>"한 warp 32 스레드의 동시 접근이 연속 주소인가"</strong>예요. CPU에선 캐시가 자동으로 도와주지만, GPU에선 <strong>인덱싱을 어떻게 짜느냐로 당신이 직접</strong> 병합 여부를 결정합니다. "메모리 레이아웃과 접근 패턴이 성능을 지배한다"는 직관은 CPU와 똑같으니, 그 감각을 그대로 가져오시면 됩니다.</p>
     </div>
 
-    <h2 id="shared">6.2 Shared Memory 타일링 — "한 번 가져와 우려먹기"</h2>
+    <h2 id="shared">6.3 Shared Memory 타일링 — "한 번 가져와 우려먹기"</h2>
     <p>
       창고(global memory)는 느립니다. 그러니 <strong>여러 번 쓸 데이터는 한 번만 가져와서 공용 작업대(shared memory)에 올려두고 재사용</strong>하면 됩니다. 이걸 <strong>타일링(tiling)</strong>이라 하고, 대표 예가 행렬 곱이에요. (행렬 곱은 같은 값을 여러 번 읽거든요.)
     </p>
@@ -245,7 +283,7 @@ C[i * stride] = A[i * stride];</code></pre>
       <div class="figcap">그림 — A의 행 띠와 B의 열 띠에서 16×16 타일을 하나씩 작업대(shared)로 가져와(①) 16번 우려먹고(②), 동기화 후 다음 타일로(③). global 접근이 1/16로 준다</div>
     </div>
 
-    <h2 id="bank">6.3 Bank Conflict — 작업대의 숨은 함정</h2>
+    <h2 id="bank">6.4 Bank Conflict — 작업대의 숨은 함정</h2>
     <p>
       공용 작업대(shared memory)에도 함정이 하나 있습니다. shared memory는 내부적으로 <strong>32개의 "뱅크(bank)"</strong>로 나뉘어 있어요 — 32개의 출납 창구라고 생각하세요. 한 warp의 여러 스레드가 <strong>같은 창구(뱅크)의 서로 다른 물건</strong>을 동시에 달라고 하면, 창구가 하나뿐이라 <strong>줄을 서야</strong> 합니다(직렬화 → 느려짐). 이게 <strong>bank conflict</strong>예요.
     </p>
@@ -330,14 +368,44 @@ C[i * stride] = A[i * stride];</code></pre>
       <div class="figcap">그림 — 스레드들이 서로 다른 뱅크에 가면 동시 처리(좌), 같은 뱅크의 다른 주소로 몰리면 한 명씩 줄서기(우). 패딩은 우측을 좌측으로 바꾸는 기법</div>
     </div>
 
-    <h2 id="occupancy">6.4 Occupancy & 분기 줄이기</h2>
+    <h2 id="warp-level">6.5 Warp 셔플과 Reduction — 작업대조차 건너뛰기</h2>
+    <p>
+      shared memory보다 더 빠른 협력 수단이 하나 더 있습니다. <a href="architecture.html#simt">같은 warp의 32 스레드</a>는 어차피 한 몸처럼 움직이니, <strong>서로의 레지스터 값을 직접 주고받을 수</strong> 있어요 — 이게 <strong>warp 셔플(shuffle)</strong>입니다. 작업대(shared memory)에 놓고 가져가는 단계조차 생략하고, 손에서 손으로 건네는 거죠(메모리 접근 0회, 동기화 불필요).
+    </p>
+    <p>대표 활용처가 <strong>reduction(합·최댓값 등 하나로 모으기)</strong>입니다. 배열 전체의 합을 구한다고 해봅시다:</p>
+    <pre><code><span class="tok-com">// warp 안 32개 값의 합 — 5번의 셔플로 끝 (반씩 접어 더하기)</span>
+<span class="tok-key">float</span> val = ...;                       <span class="tok-com">// 각 스레드가 가진 값</span>
+<span class="tok-key">for</span> (<span class="tok-key">int</span> offset = <span class="tok-num">16</span>; offset &gt; <span class="tok-num">0</span>; offset &gt;&gt;= <span class="tok-num">1</span>)
+    val += <span class="tok-fn">__shfl_down_sync</span>(<span class="tok-num">0xffffffff</span>, val, offset);
+<span class="tok-com">// offset 16: 0번←16번, 1번←17번… → 8 → 4 → 2 → 1</span>
+<span class="tok-com">// 끝나면 레인 0번이 32개의 합을 가짐</span></code></pre>
+    <p>블록 전체·배열 전체의 합은 이걸 계층으로 쌓습니다:</p>
+    <pre><code><span class="tok-com">// 전형적인 3단 reduction</span>
+① 각 warp가 셔플로 자기 32개를 합침            (레지스터끼리, 가장 빠름)
+② warp 대표들이 shared memory에 모여 다시 합침  (블록당 합 완성)
+③ 각 블록 대표가 atomicAdd로 전역 결과에 누적   (블록 수만큼만 — 경쟁 적음)</code></pre>
+    <p>
+      "수천만 개를 <code>atomicAdd</code>로 한 칸에 몰아넣기"(대기열 대참사)와 비교하면, 아토믹 호출이 <strong>원소 수 → 블록 수로</strong> 줄어듭니다. 이 패턴은 평균·분산·내적·softmax 등 어디에나 등장하니 형태를 기억해두세요. 직접 짜기 귀찮으면 <code>CUB</code> 라이브러리가 극한 최적화 버전을 제공합니다.
+    </p>
+
+    <h2 id="occupancy">6.6 Occupancy · 분기 · 그 밖의 작은 기법들</h2>
     <ul>
       <li><strong>Occupancy 확보</strong> — <a href="scheduling.html#occupancy">④에서 본</a>대로, SM에 warp를 충분히 채워 <a href="scheduling.html#warp">메모리 지연을 가립니다</a>. 단 100%가 목표는 아니고 "지연을 가릴 만큼만".</li>
       <li><strong>Warp divergence 줄이기</strong> — <a href="architecture.html#simt">같은 warp 안에서 if/else로 갈라지면 느려진다</a>고 했죠. 데이터를 미리 정렬하거나, 분기 없는(branchless) 코드로 바꿔 한 warp가 같은 길을 가게 합니다.</li>
       <li><strong>전송 숨기기</strong> — <a href="execution.html#async">스트림 overlap</a> + pinned memory로 복사와 계산을 겹쳐 복사 시간을 가립니다.</li>
     </ul>
+    <p>그리고 비용 대비 효과가 좋은 "한 줄짜리" 기법들:</p>
+    <table>
+      <thead><tr><th>기법</th><th>방법</th><th>왜 빨라지나</th></tr></thead>
+      <tbody>
+        <tr><td><strong>벡터화 적재</strong></td><td><code>float</code> 4개씩 <code>float4</code>로 읽기</td><td>메모리 명령 수가 1/4 — 같은 대역폭을 더 적은 명령으로</td></tr>
+        <tr><td><strong><code>__restrict__</code></strong></td><td>포인터 인자에 붙이기</td><td>"이 포인터들은 안 겹침"을 컴파일러에 보장 → 적극적 재배치·캐싱 허용</td></tr>
+        <tr><td><strong>Constant memory</strong></td><td>모든 스레드가 읽는 계수·설정값을 <code>__constant__</code>에</td><td><a href="architecture.html#memory">①장의 공지문</a> — 브로드캐스트로 한 번에 전달</td></tr>
+        <tr><td><strong><code>-use_fast_math</code></strong></td><td>컴파일 옵션</td><td>sin·exp·나눗셈을 빠른 근사 버전으로 (⚠️ 정밀도 손실 — 허용될 때만)</td></tr>
+      </tbody>
+    </table>
 
-    <h2 id="profile">6.5 프로파일링 — 추측 말고 측정</h2>
+    <h2 id="profile">6.7 프로파일링 — 추측 말고 측정</h2>
     <p>
       최적화의 진짜 첫걸음은 <strong>"어디가 느린지 찾는 것"</strong>입니다. 눈으로 코드를 보고 추측하면 거의 틀려요. NVIDIA가 무료로 주는 측정 도구 두 가지:
     </p>
@@ -355,15 +423,16 @@ ncu --set full ./app        <span class="tok-com"># 커널별 상세 메트릭</
       <p>행렬 곱·FFT·정렬·합(reduction) 같은 흔한 연산은 <strong>이미 전문가들이 극한까지 최적화한 라이브러리</strong>가 있고, 보통 직접 짠 것보다 빠릅니다. <code>cuBLAS</code>(선형대수), <code>cuFFT</code>(FFT), <code>CUB</code>/<code>Thrust</code>(정렬·reduction), <code>CUTLASS</code>(행렬)를 먼저 찾아보세요. 직접 최적화는 "라이브러리로 안 되는 나만의 커널"일 때.</p>
     </div>
 
-    <h2 id="checklist">6.6 최적화 체크리스트 (우선순위 순)</h2>
+    <h2 id="checklist">6.8 최적화 체크리스트 (우선순위 순)</h2>
     <ol>
-      <li><strong>프로파일링으로 병목 확인</strong> — 메모리가 느린가(memory-bound)? 계산이 느린가(compute-bound)?</li>
+      <li><strong>프로파일링으로 병목 확인</strong> — <a href="#roofline">memory-bound인가 compute-bound인가 latency-bound인가</a>. 처방이 달라짐.</li>
+      <li><strong>CPU↔GPU 복사 줄이기</strong> — 데이터는 한 번 올려서 GPU 안에서 끝내기(PCIe가 제일 느린 길).</li>
       <li><strong>메모리 병합(coalescing)</strong> — 효과 가장 큼. 이웃 스레드가 이웃 메모리를.</li>
-      <li><strong>shared memory 재사용(타일링)</strong> + bank conflict 회피</li>
-      <li><strong>occupancy 확보</strong> — 지연 가릴 만큼</li>
-      <li><strong>분기 줄이기 + 전송 overlap</strong></li>
+      <li><strong>shared memory 재사용(타일링)</strong> + bank conflict 회피, reduction엔 warp 셔플</li>
+      <li><strong>occupancy 확보</strong> — 지연 가릴 만큼 (<code>cudaOccupancyMaxPotentialBlockSize</code> 활용)</li>
+      <li><strong>분기 줄이기 + 전송 overlap</strong>, float4·<code>__restrict__</code> 같은 작은 기법</li>
       <li><strong>반복 워크로드</strong>는 <a href="graphs.html">CUDA Graphs</a>로 launch 비용 제거</li>
-      <li><strong>라이브러리</strong>로 대체 가능한지 늘 확인</li>
+      <li><strong>라이브러리</strong>로 대체 가능한지 늘 확인 (cuBLAS·CUB·CUTLASS…)</li>
     </ol>
 
     <div class="callout tip">

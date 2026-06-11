@@ -202,6 +202,16 @@ pre::after {
   color: var(--accent); opacity: .8;
 }
 pre code { background: none; padding: 0; border: none; color: #c9d1d9; font-size: inherit; }
+.copy-btn {
+  position: absolute; top: 8px; right: 62px;
+  padding: 3px 10px; border-radius: 6px; cursor: pointer;
+  background: var(--bg-elev2); border: 1px solid var(--border); color: var(--text-dim);
+  font-family: var(--mono); font-size: .66rem; letter-spacing: .04em;
+  opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+}
+pre:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--text); border-color: var(--accent); }
+.copy-btn.done { color: var(--accent-soft); border-color: var(--accent); opacity: 1; }
 .tok-key { color: #ff7b72; }
 .tok-fn { color: #d2a8ff; }
 .tok-type { color: #79c0ff; }

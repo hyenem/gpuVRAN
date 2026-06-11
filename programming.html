@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>② CUDA 프로그래밍 — GPU·CUDA 노트</title>
 <meta name="description" content="CUDA 프로그래밍 모델, 첫 커널, 메모리 관리, 스레드 동기화를 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="② CUDA 프로그래밍 — GPU·CUDA 노트">
+<meta property="og:description" content="CUDA 프로그래밍 모델, 첫 커널, 메모리 관리, 스레드 동기화를 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:url" content="https://hyenem.github.io/gpuVRAN/programming.html">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://hyenem.github.io/gpuVRAN/programming.html">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
@@ -16,7 +23,7 @@
     <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
     <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…  ( / )" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
     <nav class="nav-group">
@@ -37,8 +44,10 @@
       <a href="programming.html">개요</a>
       <a href="programming.html#model" class="sub">프로그래밍 모델</a>
       <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#patterns" class="sub">2D · grid-stride 패턴</a>
       <a href="programming.html#memory" class="sub">메모리 관리</a>
       <a href="programming.html#sync" class="sub">동기화</a>
+      <a href="programming.html#compile" class="sub">컴파일 · 실행</a>
     </nav>
     <nav class="nav-group">
       <h4>③ 실행 모델</h4>
@@ -69,9 +78,11 @@
     <nav class="nav-group">
       <h4>⑥ 성능 최적화</h4>
       <a href="optimization.html">개요</a>
+      <a href="optimization.html#roofline" class="sub">병목 진단 (roofline)</a>
       <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
       <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
       <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#warp-level" class="sub">warp 셔플 · reduction</a>
       <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
@@ -224,7 +235,49 @@ size_t bytes = n * <span class="tok-key">sizeof</span>(<span class="tok-key">flo
       <p>⚠️ 그리고 중요한 함정 — <code>cudaMalloc</code>이 준 포인터(<code>dA</code>)는 <strong>"GPU 주소"</strong>라, <strong>CPU 코드에서 <code>dA[0]</code>처럼 역참조하면 크래시</strong>합니다(반대로 CPU 포인터를 커널에 넘겨도 안 됨). "이 포인터는 CPU용? GPU용?"을 늘 구분하세요. 이 복사 비용 때문에 "복사 줄이기"가 최적화의 한 축입니다(<a href="execution.html#async">③장 스트림</a>). 참고로 <a href="#memory">Unified Memory</a>를 쓰면 이 구분을 시스템이 대신 해줘서 입문이 편해집니다.</p>
     </div>
 
-    <h2 id="memory">2.3 메모리 관리 — 세 가지 방법</h2>
+    <h2 id="patterns">2.3 실전 패턴 — 2D 그리드와 grid-stride loop</h2>
+    <p>벡터 덧셈으로 기본 형태를 봤으니, 실전 코드에서 정말 자주 만나는 두 가지 패턴을 더 익혀둡시다.</p>
+
+    <h3>패턴 1: 2D 그리드 — 이미지·행렬 다루기</h3>
+    <p>
+      이미지나 행렬처럼 2차원 데이터를 다룰 땐, 인덱스를 1차원으로 욱여넣는 대신 <strong>블록과 그리드를 2차원으로</strong> 만들 수 있습니다. <code>dim3</code> 타입으로 x·y(·z) 크기를 지정하면 돼요:
+    </p>
+    <pre><code><span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">brighten</span>(<span class="tok-key">unsigned char</span>* img, <span class="tok-key">int</span> W, <span class="tok-key">int</span> H) {
+    <span class="tok-key">int</span> x = blockIdx.x * blockDim.x + threadIdx.x;   <span class="tok-com">// 내 픽셀의 가로 좌표</span>
+    <span class="tok-key">int</span> y = blockIdx.y * blockDim.y + threadIdx.y;   <span class="tok-com">// 내 픽셀의 세로 좌표</span>
+    <span class="tok-key">if</span> (x &lt; W && y &lt; H)                              <span class="tok-com">// 양쪽 다 범위 체크!</span>
+        img[y * W + x] = <span class="tok-fn">min</span>(img[y * W + x] + <span class="tok-num">30</span>, <span class="tok-num">255</span>);
+}
+
+<span class="tok-com">// 호스트 쪽: 16×16 = 256 스레드짜리 타일로 이미지를 덮음</span>
+dim3 threads(<span class="tok-num">16</span>, <span class="tok-num">16</span>);
+dim3 blocks((W + <span class="tok-num">15</span>) / <span class="tok-num">16</span>, (H + <span class="tok-num">15</span>) / <span class="tok-num">16</span>);
+<span class="tok-fn">brighten</span>&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(dImg, W, H);</code></pre>
+    <p>
+      "스레드 한 명 = 픽셀 한 개"라는 사고법은 그대로고, 좌표가 (x, y) 두 개가 됐을 뿐입니다. 메모리는 어차피 1차원이라 <code>y*W + x</code>로 접는데, <strong>x가 연속이 되게(이웃 스레드 = 이웃 열)</strong> 잡는 게 중요해요 — 이게 ⑥장에서 볼 <a href="optimization.html#coalescing">메모리 병합</a>의 조건입니다.
+    </p>
+
+    <h3>패턴 2: Grid-Stride Loop — CUDA의 표준 관용구</h3>
+    <p>
+      지금까지는 "데이터 개수 = 스레드 개수"로 맞췄지만, <strong>스레드 수보다 데이터가 많아도 되는</strong> 더 유연한 형태가 있습니다. 각 스레드가 자기 칸 하나만 처리하고 끝나는 대신, <strong>전체 스레드 수만큼 건너뛰며 여러 칸을 처리</strong>하는 거예요:
+    </p>
+    <pre><code><span class="tok-pp">__global__</span> <span class="tok-key">void</span> <span class="tok-fn">vecAdd</span>(<span class="tok-key">float</span>* A, <span class="tok-key">float</span>* B, <span class="tok-key">float</span>* C, <span class="tok-key">int</span> n) {
+    <span class="tok-key">int</span> stride = blockDim.x * gridDim.x;             <span class="tok-com">// 전체 스레드 수</span>
+    <span class="tok-key">for</span> (<span class="tok-key">int</span> i = blockIdx.x * blockDim.x + threadIdx.x; i &lt; n; i += stride)
+        C[i] = A[i] + B[i];                          <span class="tok-com">// 내 칸 → 한 바퀴 건너 다음 칸 → ...</span>
+}
+
+<span class="tok-com">// 일꾼 수를 데이터가 아니라 'GPU 크기'에 맞춰 고정할 수 있음</span>
+<span class="tok-fn">vecAdd</span>&lt;&lt;&lt;<span class="tok-num">32</span> * numSMs, <span class="tok-num">256</span>&gt;&gt;&gt;(dA, dB, dC, n);   <span class="tok-com">// n이 얼마든 동작!</span></code></pre>
+    <p>NVIDIA가 공식적으로 권하는 패턴이고, 장점이 셋입니다:</p>
+    <ul>
+      <li><strong>크기 독립</strong> — n이 백만이든 10억이든 같은 launch 구성으로 동작. "블록 수 한도 초과" 걱정도 없음.</li>
+      <li><strong>launch 구성을 GPU에 맞춤</strong> — 블록 수를 "SM 수 × 몇 배"로 잡아 <a href="architecture.html#occupancy">occupancy</a>를 딱 맞게 채울 수 있음.</li>
+      <li><strong>스레드당 일이 많아짐</strong> — 스레드 생성·인덱스 계산 같은 고정 비용이 분산되고, 루프 안에서 명령 수준 병렬성(ILP)도 생김.</li>
+    </ul>
+    <p>루프 안의 접근(<code>i</code>, <code>i+stride</code>, …)도 매 반복에서 warp 단위로 보면 연속 주소라, 병합도 그대로 유지됩니다. <strong>"커널은 grid-stride loop로 시작하라"</strong>를 기본기로 삼아도 좋아요.</p>
+
+    <h2 id="memory">2.4 메모리 관리 — 세 가지 방법</h2>
     <h3>방법 1: 명시적 복사 (위에서 본 방식)</h3>
     <p><code>cudaMalloc</code>으로 GPU 메모리를 잡고, <code>cudaMemcpy</code>로 직접 복사. 가장 기본이고, 무슨 일이 일어나는지 명확합니다.</p>
 
@@ -373,8 +426,13 @@ size_t bytes = n * <span class="tok-key">sizeof</span>(<span class="tok-key">flo
 } <span class="tok-key">while</span>(<span class="tok-num">0</span>)
 
 <span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaMalloc</span>(&dA, bytes));   <span class="tok-com">// 모든 CUDA 호출을 이렇게 감싸기</span></code></pre>
+    <p>한 가지 함정이 더 있습니다 — <strong>커널 launch는 에러 코드를 반환하지 않아요</strong>(③장에서 볼 "비동기"라서). 그래서 커널은 이렇게 따로 체크합니다:</p>
+    <pre><code>kernel&lt;&lt;&lt;blocks, threads&gt;&gt;&gt;(...);
+<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaGetLastError</span>());        <span class="tok-com">// launch 자체의 에러 (잘못된 구성 등)</span>
+<span class="tok-fn">CUDA_CHECK</span>(<span class="tok-fn">cudaDeviceSynchronize</span>());   <span class="tok-com">// 실행 중 에러 (잘못된 메모리 접근 등) — 디버깅 시</span></code></pre>
+    <p>launch 구성이 틀린 경우(블록당 스레드 한도 초과 등)는 <code>cudaGetLastError</code>에서, 커널 안에서 터진 에러(배열 범위 밖 접근 등)는 <strong>나중에 동기화하는 지점에서</strong> 잡힙니다. "에러가 난 줄"과 "에러가 보고되는 줄"이 다를 수 있다는 걸 기억하세요.</p>
 
-    <h2 id="sync">2.4 동기화 — 같은 블록 일꾼들의 협력</h2>
+    <h2 id="sync">2.5 동기화 — 같은 블록 일꾼들의 협력</h2>
     <p>
       같은 블록(같은 SM에 있는 일꾼들)은 <strong>서로 도울 수</strong> 있습니다. 단 다른 블록끼리는 커널 도중에 직접 협력할 수 없어요(서로 다른 공장에 있으니까요). 협력에 쓰는 두 도구:
     </p>
@@ -473,12 +531,33 @@ tile[threadIdx.x] = A[idx];        <span class="tok-com">// ① 각자 자기 �
       <p>여러 일꾼이 약속(동기화) 없이 같은 메모리를 동시에 읽고 쓰면, <strong>실행할 때마다 결과가 달라지는</strong> 골치 아픈 버그가 생깁니다. 이걸 race condition이라고 해요. 공용 데이터를 다룰 땐 → <code>__syncthreads()</code>(작업대 공유) 또는 아토믹(누적)을 쓰는 습관을 들이세요.</p>
     </div>
 
+    <h2 id="compile">2.6 컴파일과 실행 — 직접 돌려보기</h2>
+    <p>
+      CUDA 코드는 확장자를 <code>.cu</code>로 저장하고, NVIDIA의 컴파일러 <strong><code>nvcc</code></strong>로 컴파일합니다. nvcc가 알아서 코드를 둘로 갈라 — CPU 부분은 일반 C++ 컴파일러로, 커널 부분은 GPU 코드로 — 컴파일한 뒤 하나의 실행 파일로 묶어줘요:
+    </p>
+    <pre><code>nvcc vecadd.cu -o vecadd     <span class="tok-com"># 컴파일 (CUDA Toolkit 설치 시 포함)</span>
+./vecadd                     <span class="tok-com"># 실행 — 보통의 프로그램과 똑같이</span>
+
+nvcc -arch=native vecadd.cu -o vecadd   <span class="tok-com"># 지금 꽂힌 GPU 세대에 최적화</span>
+nvcc -arch=sm_86  vecadd.cu -o vecadd   <span class="tok-com"># 특정 세대(CC 8.6 = RTX 30) 타깃</span>
+nvcc --ptxas-options=-v vecadd.cu       <span class="tok-com"># 커널의 레지스터·shared 사용량 출력 (튜닝 때 유용)</span></code></pre>
+    <p><code>-arch</code>가 바로 <a href="architecture.html#sm">①장의 compute capability</a>입니다. 지정 안 하면 기본 타깃으로 컴파일되는데, 일단 입문 단계에선 옵션 없이 시작해도 됩니다. 내 GPU 확인은 <code>nvidia-smi</code>.</p>
+    <div class="callout tip">
+      <div class="title">💡 GPU가 없다면 — Colab에서 3분 안에</div>
+      <p><a href="https://colab.research.google.com" target="_blank" rel="noopener">Google Colab</a>에서 런타임 유형을 GPU로 바꾸고, 셀에 이렇게 쓰면 끝입니다:</p>
+      <pre><code>%%writefile vecadd.cu
+<span class="tok-com">// (여기에 위의 CUDA 코드 붙여넣기)</span></code></pre>
+      <pre><code>!nvcc vecadd.cu -o vecadd && ./vecadd</code></pre>
+      <p>이 장의 벡터 덧셈을 직접 돌려보고, n을 바꾸고, 블록 크기를 바꿔보세요 — 손으로 한 번 돌려보는 게 열 번 읽기보다 낫습니다.</p>
+    </div>
+
     <div class="callout tip">
       <div class="title">✅ ② 장 정리</div>
       <p>
         ① 커널은 <code>__global__</code>로 표시, 내 데이터 칸은 <code>blockIdx*blockDim+threadIdx</code>로 계산.<br>
         ② CPU 쪽에서 <code>cudaMalloc</code>→<code>cudaMemcpy</code>→<code>커널&lt;&lt;&lt;&gt;&gt;&gt;</code>→<code>cudaMemcpy</code> 순으로 부름.<br>
-        ③ 블록 안 협력은 <code>__syncthreads()</code>(기다리기)와 아토믹(안전한 누적).<br>
+        ③ 실전 커널은 <strong>grid-stride loop</strong>로, 2D 데이터는 <code>dim3</code>로.<br>
+        ④ 블록 안 협력은 <code>__syncthreads()</code>(기다리기)와 아토믹(안전한 누적). 컴파일은 <code>nvcc</code>.<br>
         이제 "이 커널이 GPU 안에서 실제로 어떻게 실행되는가"를 볼 차례입니다.
       </p>
     </div>

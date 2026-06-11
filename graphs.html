@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>⑤ CUDA Graphs — GPU·CUDA 노트</title>
 <meta name="description" content="CUDA Graphs 동작 원리 — 3단계, stream capture, 그래프 업데이트, conditional node, device graph launch를 친절하게 설명합니다.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="⑤ CUDA Graphs — GPU·CUDA 노트">
+<meta property="og:description" content="CUDA Graphs 동작 원리 — 3단계, stream capture, 그래프 업데이트, conditional node, device graph launch를 친절하게 설명합니다.">
+<meta property="og:url" content="https://hyenem.github.io/gpuVRAN/graphs.html">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://hyenem.github.io/gpuVRAN/graphs.html">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
@@ -16,7 +23,7 @@
     <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
     <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…  ( / )" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
     <nav class="nav-group">
@@ -37,8 +44,10 @@
       <a href="programming.html">개요</a>
       <a href="programming.html#model" class="sub">프로그래밍 모델</a>
       <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#patterns" class="sub">2D · grid-stride 패턴</a>
       <a href="programming.html#memory" class="sub">메모리 관리</a>
       <a href="programming.html#sync" class="sub">동기화</a>
+      <a href="programming.html#compile" class="sub">컴파일 · 실행</a>
     </nav>
     <nav class="nav-group">
       <h4>③ 실행 모델</h4>
@@ -69,9 +78,11 @@
     <nav class="nav-group">
       <h4>⑥ 성능 최적화</h4>
       <a href="optimization.html">개요</a>
+      <a href="optimization.html#roofline" class="sub">병목 진단 (roofline)</a>
       <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
       <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
       <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#warp-level" class="sub">warp 셔플 · reduction</a>
       <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
@@ -100,6 +111,16 @@ a&lt;&lt;&lt;...&gt;&gt;&gt;();  b&lt;&lt;&lt;...&gt;&gt;&gt;();  c&lt;&lt;&lt;.
         <li><strong>CPU 해방 + 지터↓</strong> — CPU는 한 번만 던지고 빠짐, GPU가 알아서 쭉 실행 → 타이밍이 일정해짐.</li>
         <li><strong>드라이버가 미리 최적화</strong> — 전체 순서를 미리 아니까, 커널 사이 빈틈을 더 잘 메웁니다.</li>
       </ul>
+    </div>
+
+    <div class="callout">
+      <div class="title">🎯 언제 쓰고, 언제 쓰지 말아야 하나</div>
+      <p>판단 기준은 단순합니다 — <strong>launch 비용(~수 µs)이 커널 실행 시간 대비 큰가?</strong></p>
+      <ul>
+        <li><strong>딱 맞는 경우</strong> — 수십 µs짜리 <strong>짧은 커널 여러 개</strong>를 <strong>같은 구조로 반복</strong>: 딥러닝 학습/추론의 한 스텝(레이어 수십 개), 시뮬레이션의 타임스텝, 신호 처리 파이프라인. 실제로 PyTorch의 <code>torch.cuda.graphs</code>, TensorRT 등이 내부에서 이걸 씁니다.</li>
+        <li><strong>효과 없는 경우</strong> — 커널 하나가 수 ms 이상 도는 큰 작업(launch 비용이 0.1%도 안 됨), 또는 <strong>매번 구조가 바뀌는</strong> 워크로드(재빌드 비용이 절약분보다 큼).</li>
+      </ul>
+      <p>즉 그래프는 "GPU를 빠르게"가 아니라 <strong>"CPU가 GPU에 일 시키는 비용을 없애는"</strong> 최적화입니다. 프로파일러에서 커널 사이사이 GPU가 노는 빈틈(gap)이 보인다면 — 그게 그래프를 쓸 신호예요.</p>
     </div>
 
     <div class="callout cpu">

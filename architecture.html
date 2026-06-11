@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>① GPU 아키텍처 — GPU·CUDA 노트</title>
 <meta name="description" content="CPU vs GPU, SM 내부 구조, SIMT·warp, 메모리 계층, occupancy를 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="① GPU 아키텍처 — GPU·CUDA 노트">
+<meta property="og:description" content="CPU vs GPU, SM 내부 구조, SIMT·warp, 메모리 계층, occupancy를 비유와 예제로 친절하게 설명합니다.">
+<meta property="og:url" content="https://hyenem.github.io/gpuVRAN/architecture.html">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://hyenem.github.io/gpuVRAN/architecture.html">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
@@ -16,7 +23,7 @@
     <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
     <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…  ( / )" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
     <nav class="nav-group">
@@ -37,8 +44,10 @@
       <a href="programming.html">개요</a>
       <a href="programming.html#model" class="sub">프로그래밍 모델</a>
       <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#patterns" class="sub">2D · grid-stride 패턴</a>
       <a href="programming.html#memory" class="sub">메모리 관리</a>
       <a href="programming.html#sync" class="sub">동기화</a>
+      <a href="programming.html#compile" class="sub">컴파일 · 실행</a>
     </nav>
     <nav class="nav-group">
       <h4>③ 실행 모델</h4>
@@ -69,9 +78,11 @@
     <nav class="nav-group">
       <h4>⑥ 성능 최적화</h4>
       <a href="optimization.html">개요</a>
+      <a href="optimization.html#roofline" class="sub">병목 진단 (roofline)</a>
       <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
       <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
       <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#warp-level" class="sub">warp 셔플 · reduction</a>
       <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
@@ -210,6 +221,7 @@
         <tr><td><strong>LD/ST, SFU</strong></td><td>운반·특수계산 담당</td><td>메모리 읽고 쓰기, sin·sqrt 등</td></tr>
       </tbody>
     </table>
+
     <div class="callout">
       <div class="title">🔑 가장 중요한 한 가지</div>
       <p>SM은 <strong>레지스터·shared memory·일꾼 슬롯을 "정해진 예산"만큼만</strong> 가지고 있습니다. 마치 공장의 작업대·사물함 수가 정해져 있는 것처럼요. 이 예산이 "한 SM에 동시에 몇 명의 일꾼을 올릴 수 있나"를 결정하고, 그게 바로 뒤에 나올 <a href="#occupancy">occupancy</a>입니다. 지금은 "SM엔 자원 한도가 있다"만 기억하세요.</p>
@@ -219,6 +231,21 @@
       <div class="title">👤 CPU 개발자라면 — "CUDA 코어 수천 개"에 속지 마세요</div>
       <p>마케팅에서 "CUDA 코어 10,000개"라고 하면 CPU 코어 10,000개를 떠올리기 쉬운데, <strong>전혀 다릅니다.</strong> CUDA "코어"는 사실상 <strong>곱셈·덧셈을 하는 ALU 레인 하나</strong>예요(CPU의 AVX SIMD 레인에 가까움). 진짜 "코어"(독립적으로 명령을 가져오고 디코드하고 스케줄하는 단위)에 해당하는 건 <strong>SM</strong>입니다. 그래서 "SM이 100개, 각 SM이 수십 개의 ALU"라고 보는 게 정확해요. 그리고 레지스터 파일이 256KB로 거대한 이유 — CPU는 코어당 레지스터가 십수 개지만, GPU는 <strong>한 SM의 수천 스레드가 나눠 쓸</strong> 레지스터를 한꺼번에 갖고 있어야 하기 때문입니다(그래야 warp 전환이 0-비용).</p>
     </div>
+
+    <h3>세대(아키텍처)와 Compute Capability</h3>
+    <p>
+      위 수치들이 "Ampere 기준"이라고 했는데, NVIDIA GPU는 몇 년 주기로 세대가 바뀌고 그때마다 SM 구성·자원 한도가 조금씩 달라집니다. 세대를 숫자로 표시한 게 <strong>compute capability(CC)</strong>예요 — 코드를 컴파일할 때 "어느 세대용인가"를 지정하는 기준이 됩니다(②장 컴파일에서 다시 등장).
+    </p>
+    <table>
+      <thead><tr><th>세대</th><th>CC</th><th>대표 GPU</th><th>기억할 변화</th></tr></thead>
+      <tbody>
+        <tr><td>Volta</td><td>7.0</td><td>V100</td><td>Tensor 코어 등장, warp 스레드의 독립 PC</td></tr>
+        <tr><td>Ampere</td><td>8.0 / 8.6</td><td>A100 / RTX 30</td><td>MIG, 비동기 복사(<code>cp.async</code>)</td></tr>
+        <tr><td>Hopper / Ada</td><td>9.0 / 8.9</td><td>H100 / RTX 40</td><td>Thread Block Cluster, TMA</td></tr>
+        <tr><td>Blackwell</td><td>10.x / 12.x</td><td>B200 / RTX 50</td><td>FP4 등 저정밀 Tensor 코어 강화</td></tr>
+      </tbody>
+    </table>
+    <p>지금 단계에선 "세대마다 수치가 다르니, 내 GPU의 정확한 값은 <code>cudaGetDeviceProperties</code>나 <code>nvidia-smi</code>로 확인한다" 정도면 충분합니다.</p>
 
     <h2 id="simt">1.3 SIMT · Warp — GPU가 일하는 "단위"</h2>
     <p>GPU의 일꾼(스레드)들은 한 명씩 따로 노는 게 아닙니다. 여기서 GPU 특유의 두 개념이 나옵니다.</p>
@@ -280,6 +307,7 @@ Grid    (커널 전체 = 일감 전부)
     <div class="callout warn">
       <div class="title">⚠️ Warp Divergence — GPU의 대표적 함정</div>
       <p>같은 warp(32명)는 <strong>늘 같은 명령을 함께</strong> 실행해야 합니다. 그런데 코드에 <code>if/else</code>가 있어서 32명 중 일부는 <code>if</code>로, 일부는 <code>else</code>로 갈라지면 어떻게 될까요? GPU는 두 길을 <strong>동시에 못 가니, 순서대로(if 먼저, else 나중)</strong> 실행하고, 해당 안 되는 일꾼은 그동안 <strong>놀게</strong> 합니다. 그만큼 느려지죠. 그래서 <strong>"한 warp 안에서는 모두 같은 길을 가게 하라"</strong>가 GPU 코딩의 기본 원칙입니다. (이걸 분기 발산 = warp divergence라고 부릅니다.)</p>
+      <p>중요한 디테일 두 가지 — ① divergence는 <strong>warp 안에서만</strong> 문제입니다. warp A 전체가 if로, warp B 전체가 else로 가는 건 전혀 느려지지 않아요(서로 다른 조니까). 그래서 "분기 조건이 warp 경계(32의 배수)와 정렬되게" 데이터를 배치하는 게 흔한 처방입니다. ② <code>if</code>가 있다고 무조건 느린 게 아니라, <strong>한 warp의 32명이 서로 다른 길로 갈라질 때만</strong> 느립니다 — ②장에서 볼 <code>if (i &lt; n)</code> 범위 체크는 대부분의 warp에서 전원이 같은 결과라 거의 공짜예요.</p>
     </div>
 
     <h2 id="memory">1.4 메모리 계층 — GPU 성능의 진짜 병목</h2>
@@ -288,15 +316,22 @@ Grid    (커널 전체 = 일감 전부)
     </p>
     <p>GPU 메모리는 "가깝고 빠르지만 작은 것"부터 "멀고 느리지만 큰 것"까지 계층으로 되어 있습니다 (가까울수록 빠름):</p>
     <table>
-      <thead><tr><th>메모리</th><th>누가 같이 쓰나(공유 범위)</th><th>속도</th><th>비유</th></tr></thead>
+      <thead><tr><th>메모리</th><th>누가 같이 쓰나(공유 범위)</th><th>대략의 지연</th><th>비유</th></tr></thead>
       <tbody>
-        <tr><td><strong>레지스터</strong></td><td>스레드 혼자</td><td>가장 빠름</td><td>손에 든 메모장</td></tr>
-        <tr><td><strong>Shared Memory</strong></td><td>같은 블록끼리 (SM 내부)</td><td>매우 빠름</td><td>책상 위 공용 작업대</td></tr>
-        <tr><td><strong>L1 캐시</strong></td><td>한 SM</td><td>빠름</td><td>사무실 책장</td></tr>
-        <tr><td><strong>L2 캐시</strong></td><td>모든 SM</td><td>빠름</td><td>층 공용 자료실</td></tr>
-        <tr><td><strong>Global Memory (VRAM)</strong></td><td>모든 스레드</td><td><strong>느림 (수백 사이클)</strong></td><td>건물 밖 대형 창고</td></tr>
+        <tr><td><strong>레지스터</strong></td><td>스레드 혼자</td><td>~1 사이클</td><td>손에 든 메모장</td></tr>
+        <tr><td><strong>Shared Memory</strong></td><td>같은 블록끼리 (SM 내부)</td><td>~20–30 사이클</td><td>책상 위 공용 작업대</td></tr>
+        <tr><td><strong>L1 캐시</strong></td><td>한 SM</td><td>~30 사이클</td><td>사무실 책장</td></tr>
+        <tr><td><strong>L2 캐시</strong></td><td>모든 SM</td><td>~200 사이클</td><td>층 공용 자료실</td></tr>
+        <tr><td><strong>Global Memory (VRAM)</strong></td><td>모든 스레드</td><td><strong>~400–800 사이클 (느림!)</strong></td><td>건물 밖 대형 창고</td></tr>
+        <tr><td><strong>Constant Memory</strong></td><td>모든 스레드 (읽기 전용)</td><td>캐시 적중 시 매우 빠름</td><td>벽에 붙은 공지문</td></tr>
+        <tr><td><strong>Local Memory</strong></td><td>스레드 혼자 (이름과 달리 <em>global에 있음!</em>)</td><td>global과 동일 (느림)</td><td>메모장이 넘쳐 창고에 맡긴 짐</td></tr>
       </tbody>
     </table>
+    <p>(지연 수치는 세대마다 다른 대략값입니다 — "위아래 층 사이가 수십 배씩 차이난다"는 감만 잡으세요.) 마지막 두 줄을 짚고 갈게요:</p>
+    <ul>
+      <li><strong>Constant memory</strong> — 커널 내내 안 바뀌는 상수(계수, 설정값 등)를 두는 64KB의 읽기 전용 공간(<code>__constant__</code>). 전용 캐시가 있어서, <strong>warp의 32명이 모두 같은 주소를 읽으면 방송(broadcast)처럼 한 번에</strong> 처리됩니다. "모두가 같은 값을 읽는" 패턴에 최적.</li>
+      <li><strong>Local memory</strong> — 함정 주의. 이름은 "로컬"인데 <strong>실제 위치는 느린 global memory</strong>입니다. 스레드가 레지스터를 너무 많이 필요로 하면, 컴파일러가 넘친 변수를 여기로 쫓아내요(<strong>register spill</strong>). 커널이 이유 없이 느리면 spill부터 의심 — <code>nvcc --ptxas-options=-v</code>로 확인할 수 있습니다.</li>
+    </ul>
     <div class="figure">
       <svg viewBox="0 0 860 380" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -342,6 +377,11 @@ Grid    (커널 전체 = 일감 전부)
       <li><strong>재사용(shared memory)</strong> — 창고에서 한 번 가져온 데이터를 <em>공용 작업대(shared)</em>에 올려두고 여러 번 우려먹기.</li>
     </ul>
     <p>이 둘은 <a href="optimization.html">⑥ 최적화</a>에서 코드와 함께 자세히 다룹니다. 지금은 <strong>"먼 메모리는 느리니, 가까운 데로 가져와 재사용한다"</strong>만 가져가세요.</p>
+
+    <div class="callout">
+      <div class="title">📏 숫자로 보는 "창고보다 더 먼 곳" — PCIe</div>
+      <p>창고(global memory)가 느리다고 했지만, 사실 <strong>진짜 느린 건 CPU에서 GPU로 건너오는 길</strong>입니다. 최신 GPU의 VRAM 대역폭은 <strong>~2–3 TB/s</strong>(HBM)인데, CPU↔GPU를 잇는 PCIe는 <strong>~32–64 GB/s</strong> — 약 <strong>50배 차이</strong>예요. 그래서 "데이터를 GPU에 한 번 올렸으면 최대한 GPU 안에서 끝내라", "CPU↔GPU 왕복 복사를 줄여라"가 모든 CUDA 성능 조언의 출발점입니다(②③장에서 계속 등장).</p>
+    </div>
 
     <div class="callout cpu">
       <div class="title">👤 CPU 개발자라면 — shared memory는 "캐시"가 아닙니다</div>

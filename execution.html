@@ -5,6 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>③ CUDA 동작 방식 (실행 모델) — GPU·CUDA 노트</title>
 <meta name="description" content="커널 launch가 실제로 어떻게 도나, 비동기·스트림, 이벤트, 블록이 SM에 배정되는 과정을 친절하게 설명합니다.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="③ CUDA 동작 방식 (실행 모델) — GPU·CUDA 노트">
+<meta property="og:description" content="커널 launch가 실제로 어떻게 도나, 비동기·스트림, 이벤트, 블록이 SM에 배정되는 과정을 친절하게 설명합니다.">
+<meta property="og:url" content="https://hyenem.github.io/gpuVRAN/execution.html">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://hyenem.github.io/gpuVRAN/execution.html">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27><rect width=%27100%27 height=%27100%27 rx=%2722%27 fill=%27%2376b900%27/><text x=%2750%27 y=%2772%27 font-size=%2762%27 text-anchor=%27middle%27 font-family=%27sans-serif%27 font-weight=%27bold%27 fill=%27%230d1117%27>C</text></svg>">
 </head>
@@ -16,7 +23,7 @@
     <a href="index.html" class="brand"><span class="logo">C</span> GPU·CUDA 노트</a>
     <p class="tagline">아키텍처 · 프로그래밍 · 스케줄링</p>
     <div class="search-box">
-      <input type="text" id="site-search" placeholder="🔎 검색…" autocomplete="off" aria-label="검색">
+      <input type="text" id="site-search" placeholder="🔎 검색…  ( / )" autocomplete="off" aria-label="검색">
       <div id="search-results" class="search-results"></div>
     </div>
     <nav class="nav-group">
@@ -37,8 +44,10 @@
       <a href="programming.html">개요</a>
       <a href="programming.html#model" class="sub">프로그래밍 모델</a>
       <a href="programming.html#kernel" class="sub">첫 커널</a>
+      <a href="programming.html#patterns" class="sub">2D · grid-stride 패턴</a>
       <a href="programming.html#memory" class="sub">메모리 관리</a>
       <a href="programming.html#sync" class="sub">동기화</a>
+      <a href="programming.html#compile" class="sub">컴파일 · 실행</a>
     </nav>
     <nav class="nav-group">
       <h4>③ 실행 모델</h4>
@@ -69,9 +78,11 @@
     <nav class="nav-group">
       <h4>⑥ 성능 최적화</h4>
       <a href="optimization.html">개요</a>
+      <a href="optimization.html#roofline" class="sub">병목 진단 (roofline)</a>
       <a href="optimization.html#coalescing" class="sub">메모리 병합</a>
       <a href="optimization.html#shared" class="sub">shared memory 타일링</a>
       <a href="optimization.html#bank" class="sub">bank conflict</a>
+      <a href="optimization.html#warp-level" class="sub">warp 셔플 · reduction</a>
       <a href="optimization.html#profile" class="sub">프로파일링</a>
     </nav>
   </aside>
@@ -226,6 +237,14 @@
       <p>비동기 복사(<code>cudaMemcpyAsync</code>)가 진짜로 겹치려면, 호스트 메모리가 <a href="programming.html#memory">pinned memory</a>여야 합니다. 일반 메모리면 효과가 제한돼요.</p>
     </div>
 
+    <div class="callout warn">
+      <div class="title">⚠️ "기본 스트림(default stream)"의 함정</div>
+      <p>
+        스트림을 안 만들고 그냥 <code>kernel&lt;&lt;&lt;b, t&gt;&gt;&gt;()</code>로 실행하면 <strong>기본 스트림(스트림 0)</strong>에 들어갑니다. 그런데 이 기본 스트림은 보통 줄이 아니라 <strong>"다른 모든 스트림과 동기화되는" 특별한 줄</strong>이에요(legacy 동작). 기본 스트림에 작업이 들어가는 순간, 앞서 만든 s1·s2의 병렬 진행이 <strong>전부 멈췄다 가게</strong> 됩니다 — "스트림을 썼는데 overlap이 안 돼요"의 단골 원인이죠.
+      </p>
+      <p>대처는 둘 중 하나 — ① overlap을 원하는 작업은 <strong>전부 명시적 스트림에</strong> 넣기(기본 스트림 안 쓰기), ② 컴파일 시 <code>nvcc --default-stream per-thread</code>로 기본 스트림을 "보통 스트림"으로 바꾸기.</p>
+    </div>
+
     <h2 id="events">3.3 이벤트 · 동기화 — 시간 재기와 줄 맞추기</h2>
     <p>
       여러 스트림(줄)이 돌아갈 때, "언제 끝났나" 측정하거나 "이 줄은 저 줄을 기다려라" 조율하려면 <strong>이벤트(event)</strong>를 씁니다. 이벤트는 작업 흐름 속의 <strong>"표시 깃발"</strong> 같은 거예요.
@@ -233,7 +252,8 @@
     <ul>
       <li><strong>시간 측정</strong> — 깃발 두 개를 꽂고 그 사이 GPU 시간을 잼. CPU 타이머보다 정확합니다.</li>
       <li><strong>스트림 간 의존성</strong> — <code>cudaStreamWaitEvent</code>로 "B 줄은 A 줄의 이 깃발까지 기다려".</li>
-      <li><strong>전체/부분 동기화</strong> — <code>cudaDeviceSynchronize()</code>(모든 일), <code>cudaStreamSynchronize(s)</code>(한 줄만).</li>
+      <li><strong>전체/부분 동기화</strong> — <code>cudaDeviceSynchronize()</code>(모든 일), <code>cudaStreamSynchronize(s)</code>(한 줄만), <code>cudaEventQuery(e)</code>(기다리지 않고 "끝났어?"만 물어보기).</li>
+      <li><strong>CPU 함수 끼워넣기</strong> — <code>cudaLaunchHostFunc(s, fn, arg)</code>로 스트림 흐름 속에 "이 시점에 CPU 함수 fn을 불러줘"를 넣을 수 있어요(예: GPU 결과가 준비되는 순간 로그 남기기). 단 그 함수 안에서 CUDA 호출은 금지.</li>
     </ul>
     <pre><code><span class="tok-com">// 커널 실행 시간 재기</span>
 cudaEvent_t start, stop;
