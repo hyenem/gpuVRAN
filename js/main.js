@@ -1,3 +1,18 @@
+// 상단 읽기 진행률 바
+document.addEventListener('DOMContentLoaded', () => {
+  const bar = document.createElement('div');
+  bar.className = 'reading-progress';
+  document.body.appendChild(bar);
+  const update = () => {
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    bar.style.width = max > 0 ? (h.scrollTop / max * 100) + '%' : '0';
+  };
+  window.addEventListener('scroll', update, { passive: true });
+  window.addEventListener('resize', update);
+  update();
+});
+
 // 모바일 사이드바 토글 + 현재 페이지 메뉴 하이라이트
 document.addEventListener('DOMContentLoaded', () => {
   // 모바일 토글
